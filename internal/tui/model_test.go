@@ -3,7 +3,7 @@ package tui
 import (
 	"testing"
 
-	"gkill/internal/process"
+	"github.com/w31r4/gokill/internal/process"
 
 	tea "github.com/charmbracelet/bubbletea"
 )

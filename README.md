@@ -1,26 +1,28 @@
-# gkill
+# gokill
 
-An interactive process killer for Linux and macOS, refactored with modern Go and Bubble Tea.
+**A modern, interactive process killer for macOS & Linux.**
+
+This project is a complete rewrite and modernization of the original [gkill](https://github.com/heppu/gkill), rebuilt from the ground up with modern Go, [Bubble Tea](https://github.com/charmbracelet/bubbletea), and fuzzy search capabilities.
 
 ## Installation
 
-To install `gkill`, make sure you have Go installed on your system. Then, you can use `go install`:
+Ensure you have a working Go environment. You can install `gokill` with `go install`:
 
 ```sh
-go install github.com/heppu/gkill@latest
+go install github.com/w31r4/gokill@latest
 ```
 
 Alternatively, you can clone the repository and build it from source:
 
 ```sh
-git clone https://github.com/heppu/gkill.git
-cd gkill
+git clone https://github.com/w31r4/gokill.git
+cd gokill
 go build
 ```
 
 ## Usage
 
-Run `gkill` in your terminal.
+Run `gokill` in your terminal to start the interactive interface. You can immediately start typing to fuzzy search for processes by name or PID.
 
 ### Keybindings
 
@@ -28,9 +30,9 @@ Run `gkill` in your terminal.
 | --- | --- |
 | `up`/`k` | Move cursor up |
 | `down`/`j` | Move cursor down |
-| `/` | Enter filter mode |
-| `enter` | Kill selected process (in navigation mode) / Exit filter mode |
-| `esc` | Exit filter mode |
+| `/` | Enter search/filter mode |
+| `enter` | Kill selected process (in navigation mode) / Exit search mode |
+| `esc` | Exit search mode |
 | `p` | Pause selected process (SIGSTOP) |
 | `r` | Resume selected process (SIGCONT) |
 | `ctrl+r` | Refresh process list |

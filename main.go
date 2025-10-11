@@ -4,7 +4,7 @@ import (
 	"os"
 	"strings"
 
-	"gkill/internal/tui"
+	"github.com/w31r4/gokill/internal/tui"
 )
 
 func main() {

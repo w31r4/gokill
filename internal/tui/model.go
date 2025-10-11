@@ -6,7 +6,7 @@ import (
 	"strings"
 	"syscall"
 
-	"gkill/internal/process"
+	"github.com/w31r4/gokill/internal/process"
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
