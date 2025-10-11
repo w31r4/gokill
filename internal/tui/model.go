@@ -64,7 +64,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case errMsg:
-		m.err = msg.err
+		// We're just going to display the error for now, unless it's a
+		// "process already finished" error, in which case we'll just
+		// ignore it.
+		if !strings.Contains(msg.err.Error(), "process already finished") {
+			m.err = msg.err
+		}
 		return m, nil
 
 	case tea.KeyMsg:
@@ -217,21 +222,42 @@ func (m model) View() string {
 	// Render viewport
 	for i := start; i < end; i++ {
 		p := m.filtered[i]
-		line := fmt.Sprintf("%-20s %-10s %d", p.Executable(), p.User, p.Pid())
-
+		status := " "
 		switch p.Status {
 		case process.Killed:
-			line = killingStyle.Render(line)
+			status = "K"
 		case process.Paused:
-			line = pausedStyle.Render(line)
+			status = "P"
 		}
+		line := fmt.Sprintf("[%s] %-20s %-10s %d", status, p.Executable(), p.User, p.Pid())
 
 		if i == m.cursor {
+			switch p.Status {
+			case process.Killed:
+				line = killingStyle.Render(line)
+			case process.Paused:
+				line = pausedStyle.Render(line)
+			}
 			fmt.Fprintln(&b, selectedStyle.Render("❯ "+line))
 		} else {
+			switch p.Status {
+			case process.Killed:
+				line = killingStyle.Render(line)
+			case process.Paused:
+				line = pausedStyle.Render(line)
+			}
 			fmt.Fprintln(&b, "  "+faintStyle.Render(line))
 		}
 	}
+
+	// Footer
+	var help strings.Builder
+	if m.textInput.Focused() {
+		help.WriteString(faintStyle.Render(" enter/esc to exit filter"))
+	} else {
+		help.WriteString(faintStyle.Render(" /: find • r: refresh • p: pause • enter: kill • q: quit"))
+	}
+	fmt.Fprint(&b, "\n"+help.String())
 
 	return docStyle.Render(b.String())
 }
