@@ -40,6 +40,7 @@ Run `gokill` in your terminal to start the interactive interface. You can immedi
 
 ## Related
 
+- [gkill](https://github.com/heppu/gkill) - The original project that this is a modernization of.
 - [fkill-cli](https://github.com/sindresorhus/fkill-cli) - A great Node.js alternative that inspired this project.
 
 ## License
