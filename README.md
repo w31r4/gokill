@@ -1,21 +1,30 @@
-gkill - Interactive process killer for Linux and macOS
+# gkill
 
-![](https://raw.githubusercontent.com/heppu/gkill/gif/screencast.gif)
+An interactive process killer for Linux and macOS, refactored with modern Go and Bubble Tea.
 
-![](https://travis-ci.org/heppu/gkill.svg?branch=master)
+## Installation
 
-## Install
+To install `gkill`, make sure you have Go installed on your system. Then, you can use `go install`:
 
+```sh
+go install github.com/heppu/gkill@latest
 ```
-go get github.com/heppu/gkill
+
+Alternatively, you can clone the repository and build it from source:
+
+```sh
+git clone https://github.com/heppu/gkill.git
+cd gkill
+go build
 ```
 
 ## Usage
-Run gkill and select process you want to kill by using filter and moving with arrow keys.
+
+Run `gkill` in your terminal. Use the arrow keys (`up`/`down` or `j`/`k`) to navigate the process list. Type to filter the processes in real-time. Press `enter` to kill the selected process. Press `q` or `ctrl+c` to quit.
 
 ## Related
 
-- [fkill-cli](https://github.com/sindresorhus/fkill-cli) - Nodejs alternative
+- [fkill-cli](https://github.com/sindresorhus/fkill-cli) - A great Node.js alternative that inspired this project.
 
 ## License
 
