@@ -255,7 +255,7 @@ func (m model) View() string {
 	if m.textInput.Focused() {
 		help.WriteString(faintStyle.Render(" enter/esc to exit filter"))
 	} else {
-		help.WriteString(faintStyle.Render(" /: find • r: refresh • p: pause • enter: kill • q: quit"))
+		help.WriteString(faintStyle.Render(" /: find • ctrl+r: refresh • r: resume • p: pause • enter: kill • q: quit"))
 	}
 	fmt.Fprint(&b, "\n"+help.String())
 

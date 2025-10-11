@@ -38,25 +38,16 @@ func GetProcesses() ([]*Item, error) {
 	}
 
 	items := make([]*Item, 0, len(procs))
-	for _, p := range procs {
-		// Get user info
-		var uid, username string
-		// This interface check is for linux/darwin compatibility.
-		type uidFinder interface {
-			Uid() string
-		}
-		if unixProc, ok := p.(uidFinder); ok {
-			uid = unixProc.Uid()
-			if u, err := user.LookupId(uid); err == nil {
-				username = u.Username
-			}
-		}
+	currentUser, err := user.Current()
+	if err != nil {
+		return nil, err
+	}
 
+	for _, p := range procs {
 		items = append(items, &Item{
 			Process: p,
 			Status:  Alive,
-			UID:     uid,
-			User:    username,
+			User:    currentUser.Username,
 		})
 	}
 
