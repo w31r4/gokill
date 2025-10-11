@@ -92,6 +92,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// Filter the processes
 	m.filtered = m.filterProcesses(m.textInput.Value())
 
+	// Clamp cursor to the new filtered list
+	if m.cursor >= len(m.filtered) {
+		if len(m.filtered) > 0 {
+			m.cursor = len(m.filtered) - 1
+		} else {
+			m.cursor = 0
+		}
+	}
+
 	return m, tea.Batch(cmd, filterCmd)
 }
 
@@ -125,6 +134,10 @@ var (
 	faintStyle    = lipgloss.NewStyle().Faint(true)
 )
 
+const (
+	viewHeight = 7
+)
+
 func (m model) View() string {
 	if m.err != nil {
 		return fmt.Sprintf("\nError: %v\n\n", m.err)
@@ -136,15 +149,40 @@ func (m model) View() string {
 
 	var b strings.Builder
 
-	fmt.Fprintf(&b, "Filter: %s\n\n", m.textInput.View())
+	// Header
+	count := fmt.Sprintf("(%d/%d)", len(m.filtered), len(m.processes))
+	fmt.Fprintf(&b, "Filter processes %s: %s\n\n", faintStyle.Render(count), m.textInput.View())
 
-	for i, p := range m.filtered {
-		if i == m.cursor {
-			fmt.Fprint(&b, selectedStyle.Render(fmt.Sprintf("> %s (%d)", p.Executable(), p.Pid())))
-		} else {
-			fmt.Fprintf(&b, "  %s %s", p.Executable(), faintStyle.Render(fmt.Sprintf("(%d)", p.Pid())))
+	// No results
+	if len(m.filtered) == 0 {
+		fmt.Fprintln(&b, "  No results...")
+		return docStyle.Render(b.String())
+	}
+
+	// Viewport calculation
+	start := m.cursor - viewHeight/2
+	if start < 0 {
+		start = 0
+	}
+	end := start + viewHeight
+	if end > len(m.filtered) {
+		end = len(m.filtered)
+		start = end - viewHeight
+		if start < 0 {
+			start = 0
 		}
-		fmt.Fprintln(&b)
+	}
+
+	// Render viewport
+	for i := start; i < end; i++ {
+		p := m.filtered[i]
+		line := fmt.Sprintf("%-30s %d", p.Executable(), p.Pid())
+
+		if i == m.cursor {
+			fmt.Fprintln(&b, selectedStyle.Render("❯ "+line))
+		} else {
+			fmt.Fprintln(&b, "  "+faintStyle.Render(line))
+		}
 	}
 
 	return docStyle.Render(b.String())
