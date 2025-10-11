@@ -11,6 +11,7 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/sahilm/fuzzy"
 )
 
 // A message containing the list of processes.
@@ -31,7 +32,7 @@ type model struct {
 // InitialModel returns the initial model for the program
 func InitialModel(filter string) model {
 	ti := textinput.New()
-	ti.Placeholder = "Filter processes"
+	ti.Placeholder = "Search processes"
 	ti.CharLimit = 156
 	ti.Width = 20
 	ti.SetValue(filter)
@@ -140,17 +141,47 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, tea.Batch(cmd, filterCmd)
 }
 
+// fuzzyProcessSource wraps the process list to implement the fuzzy.Source interface.
+type fuzzyProcessSource struct {
+	processes []*process.Item
+}
+
+// String returns the string to be matched for the item at index i.
+// We combine executable and PID to allow searching on both.
+func (s fuzzyProcessSource) String(i int) string {
+	p := s.processes[i]
+	return fmt.Sprintf("%s %d", p.Executable(), p.Pid())
+}
+
+// Len returns the number of items in the collection.
+func (s fuzzyProcessSource) Len() int {
+	return len(s.processes)
+}
+
 func (m *model) filterProcesses(filter string) []*process.Item {
 	var filtered []*process.Item
-	for _, p := range m.processes {
-		// Hide killed processes on new filter
-		if p.Status == process.Killed {
-			continue
+	// If the filter is empty, return all non-killed processes.
+	if filter == "" {
+		for _, p := range m.processes {
+			if p.Status != process.Killed {
+				filtered = append(filtered, p)
+			}
 		}
-		if filter == "" || strings.Contains(strings.ToLower(p.Executable()), strings.ToLower(filter)) {
+		return filtered
+	}
+
+	// Use the fuzzy finder to get ranked matches.
+	source := fuzzyProcessSource{processes: m.processes}
+	matches := fuzzy.FindFrom(filter, source)
+
+	// Build the filtered list from the matches.
+	for _, match := range matches {
+		p := m.processes[match.Index]
+		if p.Status != process.Killed {
 			filtered = append(filtered, p)
 		}
 	}
+
 	return filtered
 }
 
@@ -188,7 +219,7 @@ func (m model) View() string {
 
 	// Header
 	count := fmt.Sprintf("(%d/%d)", len(m.filtered), len(m.processes))
-	fmt.Fprintf(&b, "Filter processes %s: %s\n\n", faintStyle.Render(count), m.textInput.View())
+	fmt.Fprintf(&b, "Search processes %s: %s\n\n", faintStyle.Render(count), m.textInput.View())
 
 	// No results
 	if len(m.filtered) == 0 {
@@ -196,9 +227,9 @@ func (m model) View() string {
 		// Footer
 		help := "  "
 		if m.textInput.Focused() {
-			help += faintStyle.Render("enter/esc to exit filter")
+			help += faintStyle.Render("enter/esc to exit search")
 		} else {
-			help += faintStyle.Render("q: quit, /: filter, p: pause, r: resume, enter: kill, ctrl+r: refresh")
+			help += faintStyle.Render("q: quit, /: search, p: pause, r: resume, enter: kill, ctrl+r: refresh")
 		}
 		fmt.Fprint(&b, "\n"+help)
 
@@ -253,9 +284,9 @@ func (m model) View() string {
 	// Footer
 	var help strings.Builder
 	if m.textInput.Focused() {
-		help.WriteString(faintStyle.Render(" enter/esc to exit filter"))
+		help.WriteString(faintStyle.Render(" enter/esc to exit search"))
 	} else {
-		help.WriteString(faintStyle.Render(" /: find • ctrl+r: refresh • r: resume • p: pause • enter: kill • q: quit"))
+		help.WriteString(faintStyle.Render(" /: search • ctrl+r: refresh • r: resume • p: pause • enter: kill • q: quit"))
 	}
 	fmt.Fprint(&b, "\n"+help.String())
 
