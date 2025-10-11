@@ -37,7 +37,6 @@ type model struct {
 func InitialModel(filter string) model {
 	ti := textinput.New()
 	ti.Placeholder = "Filter processes"
-	ti.Focus()
 	ti.CharLimit = 156
 	ti.Width = 20
 	ti.SetValue(filter)
