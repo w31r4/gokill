@@ -2,11 +2,10 @@ package process
 
 import (
 	"os"
-	"os/user"
 	"sort"
 	"syscall"
 
-	"github.com/mitchellh/go-ps"
+	"github.com/shirou/gopsutil/v3/process"
 )
 
 // Status represents the state of a process item in the list.
@@ -21,33 +20,59 @@ const (
 	Paused
 )
 
-// Item represents a process in our list. It wraps the original ps.Process
-// and adds our own state management.
+// Item represents a process in our list.
 type Item struct {
-	ps.Process
-	Status Status
-	UID    string
-	User   string
+	pid        int32
+	executable string
+	User       string
+	Status     Status
+}
+
+// NewItem creates a new Item for testing purposes.
+func NewItem(pid int, executable, user string) *Item {
+	return &Item{
+		pid:        int32(pid),
+		executable: executable,
+		User:       user,
+		Status:     Alive,
+	}
+}
+
+// Pid returns the process ID.
+func (i *Item) Pid() int {
+	return int(i.pid)
+}
+
+// Executable returns the process executable name.
+func (i *Item) Executable() string {
+	return i.executable
 }
 
 // GetProcesses returns a list of all processes, wrapped in our Item struct.
 func GetProcesses() ([]*Item, error) {
-	procs, err := ps.Processes()
+	procs, err := process.Processes()
 	if err != nil {
 		return nil, err
 	}
 
 	items := make([]*Item, 0, len(procs))
-	currentUser, err := user.Current()
-	if err != nil {
-		return nil, err
-	}
-
 	for _, p := range procs {
+		name, err := p.Name()
+		if err != nil {
+			// Skip processes we can't get a name for
+			continue
+		}
+		user, err := p.Username()
+		if err != nil {
+			// If we can't get the username, we can default it.
+			user = "n/a"
+		}
+
 		items = append(items, &Item{
-			Process: p,
-			Status:  Alive,
-			User:    currentUser.Username,
+			pid:        p.Pid,
+			executable: name,
+			User:       user,
+			Status:     Alive,
 		})
 	}
 

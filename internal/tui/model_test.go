@@ -8,22 +8,12 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-// mockProcess is a mock implementation of ps.Process for testing.
-type mockProcess struct {
-	pid  int
-	name string
-}
-
-func (p *mockProcess) Pid() int           { return p.pid }
-func (p *mockProcess) PPid() int          { return 0 }
-func (p *mockProcess) Executable() string { return p.name }
-
 func TestUpdate(t *testing.T) {
 	m := InitialModel("")
 	m.processes = []*process.Item{
-		{Process: &mockProcess{name: "foo"}},
-		{Process: &mockProcess{name: "bar"}},
-		{Process: &mockProcess{name: "baz"}},
+		process.NewItem(1, "foo", "test"),
+		process.NewItem(2, "bar", "test"),
+		process.NewItem(3, "baz", "test"),
 	}
 	m.filtered = m.processes
 
@@ -45,9 +35,9 @@ func TestUpdate(t *testing.T) {
 func TestFilterProcesses(t *testing.T) {
 	m := model{
 		processes: []*process.Item{
-			{Process: &mockProcess{name: "foo"}},
-			{Process: &mockProcess{name: "bar"}},
-			{Process: &mockProcess{name: "foobar"}},
+			process.NewItem(1, "foo", "test"),
+			process.NewItem(2, "bar", "test"),
+			process.NewItem(3, "foobar", "test"),
 		},
 	}
 
