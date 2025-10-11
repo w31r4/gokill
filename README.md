@@ -20,7 +20,21 @@ go build
 
 ## Usage
 
-Run `gkill` in your terminal. Use the arrow keys (`up`/`down` or `j`/`k`) to navigate the process list. Type to filter the processes in real-time. Press `enter` to kill the selected process. Press `q` or `ctrl+c` to quit.
+Run `gkill` in your terminal.
+
+### Keybindings
+
+| Key | Action |
+| --- | --- |
+| `up`/`k` | Move cursor up |
+| `down`/`j` | Move cursor down |
+| `/` | Enter filter mode |
+| `enter` | Kill selected process (in navigation mode) / Exit filter mode |
+| `esc` | Exit filter mode |
+| `p` | Pause selected process (SIGSTOP) |
+| `r` | Resume selected process (SIGCONT) |
+| `ctrl+r` | Refresh process list |
+| `q`/`ctrl+c` | Quit |
 
 ## Related
 

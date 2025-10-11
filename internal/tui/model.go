@@ -6,8 +6,6 @@ import (
 	"strings"
 	"syscall"
 
-	"time"
-
 	"gkill/internal/process"
 
 	"github.com/charmbracelet/bubbles/textinput"
@@ -20,9 +18,6 @@ type processesMsg []*process.Item
 
 // A message containing an error.
 type errMsg struct{ err error }
-
-// A message sent on a timer.
-type tickMsg time.Time
 
 // model a struct to hold our application's state
 type model struct {
@@ -47,13 +42,7 @@ func InitialModel(filter string) model {
 }
 
 func (m model) Init() tea.Cmd {
-	return tea.Batch(getProcesses, tick())
-}
-
-func tick() tea.Cmd {
-	return tea.Tick(time.Second*1, func(t time.Time) tea.Msg {
-		return tickMsg(t)
-	})
+	return getProcesses
 }
 
 // getProcesses is a tea.Cmd that gets the list of processes.
@@ -69,49 +58,19 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 
 	switch msg := msg.(type) {
-	case tickMsg:
-		return m, getProcesses
 	case processesMsg:
-		// Create a map of the new processes for easy lookup.
-		newProcs := make(map[int]*process.Item)
-		for _, p := range msg {
-			newProcs[p.Pid()] = p
-		}
-
-		// Update the status of existing processes.
-		for _, p := range m.processes {
-			if _, ok := newProcs[p.Pid()]; !ok {
-				// Process is no longer running
-				p.Status = process.Killed
-			}
-		}
-
-		// Add new processes to our list.
-		for _, p := range msg {
-			found := false
-			for _, oldP := range m.processes {
-				if p.Pid() == oldP.Pid() {
-					found = true
-					break
-				}
-			}
-			if !found {
-				m.processes = append(m.processes, p)
-			}
-		}
-
+		m.processes = msg
 		m.filtered = m.filterProcesses(m.textInput.Value())
-		return m, tick()
+		return m, nil
 
 	case errMsg:
-		// We're just going to display the error for now.
 		m.err = msg.err
 		return m, nil
 
 	case tea.KeyMsg:
-		// When the user is typing, we want to ignore other key presses.
 		if m.textInput.Focused() {
-			if msg.String() == "enter" {
+			switch msg.String() {
+			case "enter", "esc":
 				m.textInput.Blur()
 			}
 			m.textInput, cmd = m.textInput.Update(msg)
@@ -122,6 +81,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.String() {
 		case "ctrl+c", "q":
 			return m, tea.Quit
+		case "ctrl+r":
+			return m, getProcesses
 		case "/":
 			m.textInput.Focus()
 			return m, nil
@@ -148,8 +109,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "r":
 			if len(m.filtered) > 0 {
 				p := m.filtered[m.cursor]
-				p.Status = process.Alive
-				return m, sendSignal(p.Pid(), syscall.SIGCONT)
+				if p.Status == process.Paused {
+					p.Status = process.Alive
+					return m, sendSignal(p.Pid(), syscall.SIGCONT)
+				}
 			}
 		}
 	}
@@ -225,6 +188,15 @@ func (m model) View() string {
 	// No results
 	if len(m.filtered) == 0 {
 		fmt.Fprintln(&b, "  No results...")
+		// Footer
+		help := "  "
+		if m.textInput.Focused() {
+			help += faintStyle.Render("enter/esc to exit filter")
+		} else {
+			help += faintStyle.Render("q: quit, /: filter, p: pause, r: resume, enter: kill, ctrl+r: refresh")
+		}
+		fmt.Fprint(&b, "\n"+help)
+
 		return docStyle.Render(b.String())
 	}
 
