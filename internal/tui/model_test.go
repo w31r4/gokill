@@ -20,10 +20,10 @@ func (p *mockProcess) Executable() string { return p.name }
 
 func TestUpdate(t *testing.T) {
 	m := InitialModel("")
-	m.processes = []process.Process{
-		&mockProcess{name: "foo"},
-		&mockProcess{name: "bar"},
-		&mockProcess{name: "baz"},
+	m.processes = []*process.Item{
+		{Process: &mockProcess{name: "foo"}},
+		{Process: &mockProcess{name: "bar"}},
+		{Process: &mockProcess{name: "baz"}},
 	}
 	m.filtered = m.processes
 
@@ -44,10 +44,10 @@ func TestUpdate(t *testing.T) {
 
 func TestFilterProcesses(t *testing.T) {
 	m := model{
-		processes: []process.Process{
-			&mockProcess{name: "foo"},
-			&mockProcess{name: "bar"},
-			&mockProcess{name: "foobar"},
+		processes: []*process.Item{
+			{Process: &mockProcess{name: "foo"}},
+			{Process: &mockProcess{name: "bar"}},
+			{Process: &mockProcess{name: "foobar"}},
 		},
 	}
 

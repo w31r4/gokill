@@ -2,39 +2,77 @@ package process
 
 import (
 	"os"
+	"os/user"
 	"sort"
 	"syscall"
 
 	"github.com/mitchellh/go-ps"
 )
 
-// Process is a wrapper around ps.Process
-type Process ps.Process
+// Status represents the state of a process item in the list.
+type Status int
 
-// GetProcesses returns a list of all processes sorted by name.
-func GetProcesses() ([]Process, error) {
+const (
+	// Alive is the default status for a running process.
+	Alive Status = iota
+	// Killed marks a process that has been sent a SIGTERM signal.
+	Killed
+	// Paused marks a process that has been sent a SIGSTOP signal.
+	Paused
+)
+
+// Item represents a process in our list. It wraps the original ps.Process
+// and adds our own state management.
+type Item struct {
+	ps.Process
+	Status Status
+	UID    string
+	User   string
+}
+
+// GetProcesses returns a list of all processes, wrapped in our Item struct.
+func GetProcesses() ([]*Item, error) {
 	procs, err := ps.Processes()
 	if err != nil {
 		return nil, err
 	}
 
-	sort.Slice(procs, func(i, j int) bool {
-		return procs[i].Executable() < procs[j].Executable()
-	})
+	items := make([]*Item, 0, len(procs))
+	for _, p := range procs {
+		// Get user info
+		var uid, username string
+		// This interface check is for linux/darwin compatibility.
+		type uidFinder interface {
+			Uid() string
+		}
+		if unixProc, ok := p.(uidFinder); ok {
+			uid = unixProc.Uid()
+			if u, err := user.LookupId(uid); err == nil {
+				username = u.Username
+			}
+		}
 
-	result := make([]Process, len(procs))
-	for i, p := range procs {
-		result[i] = Process(p)
+		items = append(items, &Item{
+			Process: p,
+			Status:  Alive,
+			UID:     uid,
+			User:    username,
+		})
 	}
 
-	return result, nil
+	// Sort by executable name
+	sort.Slice(items, func(i, j int) bool {
+		return items[i].Executable() < items[j].Executable()
+	})
+
+	return items, nil
 }
 
-// KillProcess kills a process by its PID.
-func KillProcess(pid int) error {
+// SendSignal sends a signal to a process by its PID.
+func SendSignal(pid int, sig syscall.Signal) error {
 	p, err := os.FindProcess(pid)
 	if err != nil {
 		return err
 	}
-	return p.Signal(syscall.SIGTERM)
+	return p.Signal(sig)
 }

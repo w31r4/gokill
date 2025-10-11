@@ -4,6 +4,9 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"syscall"
+
+	"time"
 
 	"gkill/internal/process"
 
@@ -13,15 +16,18 @@ import (
 )
 
 // A message containing the list of processes.
-type processesMsg []process.Process
+type processesMsg []*process.Item
 
 // A message containing an error.
 type errMsg struct{ err error }
 
+// A message sent on a timer.
+type tickMsg time.Time
+
 // model a struct to hold our application's state
 type model struct {
-	processes []process.Process
-	filtered  []process.Process
+	processes []*process.Item
+	filtered  []*process.Item
 	cursor    int
 	textInput textinput.Model
 	err       error
@@ -42,7 +48,13 @@ func InitialModel(filter string) model {
 }
 
 func (m model) Init() tea.Cmd {
-	return getProcesses
+	return tea.Batch(getProcesses, tick())
+}
+
+func tick() tea.Cmd {
+	return tea.Tick(time.Second*1, func(t time.Time) tea.Msg {
+		return tickMsg(t)
+	})
 }
 
 // getProcesses is a tea.Cmd that gets the list of processes.
@@ -58,19 +70,62 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 
 	switch msg := msg.(type) {
+	case tickMsg:
+		return m, getProcesses
 	case processesMsg:
-		m.processes = msg
-		m.filtered = msg
-		return m, nil
+		// Create a map of the new processes for easy lookup.
+		newProcs := make(map[int]*process.Item)
+		for _, p := range msg {
+			newProcs[p.Pid()] = p
+		}
+
+		// Update the status of existing processes.
+		for _, p := range m.processes {
+			if _, ok := newProcs[p.Pid()]; !ok {
+				// Process is no longer running
+				p.Status = process.Killed
+			}
+		}
+
+		// Add new processes to our list.
+		for _, p := range msg {
+			found := false
+			for _, oldP := range m.processes {
+				if p.Pid() == oldP.Pid() {
+					found = true
+					break
+				}
+			}
+			if !found {
+				m.processes = append(m.processes, p)
+			}
+		}
+
+		m.filtered = m.filterProcesses(m.textInput.Value())
+		return m, tick()
 
 	case errMsg:
+		// We're just going to display the error for now.
 		m.err = msg.err
-		return m, tea.Quit
+		return m, nil
 
 	case tea.KeyMsg:
+		// When the user is typing, we want to ignore other key presses.
+		if m.textInput.Focused() {
+			if msg.String() == "enter" {
+				m.textInput.Blur()
+			}
+			m.textInput, cmd = m.textInput.Update(msg)
+			m.filtered = m.filterProcesses(m.textInput.Value())
+			return m, cmd
+		}
+
 		switch msg.String() {
 		case "ctrl+c", "q":
 			return m, tea.Quit
+		case "/":
+			m.textInput.Focus()
+			return m, nil
 		case "up", "k":
 			if m.cursor > 0 {
 				m.cursor--
@@ -81,7 +136,21 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		case "enter":
 			if len(m.filtered) > 0 {
-				return m, m.killProcess(m.filtered[m.cursor].Pid())
+				p := m.filtered[m.cursor]
+				p.Status = process.Killed
+				return m, sendSignal(p.Pid(), syscall.SIGTERM)
+			}
+		case "p":
+			if len(m.filtered) > 0 {
+				p := m.filtered[m.cursor]
+				p.Status = process.Paused
+				return m, sendSignal(p.Pid(), syscall.SIGSTOP)
+			}
+		case "r":
+			if len(m.filtered) > 0 {
+				p := m.filtered[m.cursor]
+				p.Status = process.Alive
+				return m, sendSignal(p.Pid(), syscall.SIGCONT)
 			}
 		}
 	}
@@ -104,27 +173,26 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, tea.Batch(cmd, filterCmd)
 }
 
-func (m *model) filterProcesses(filter string) []process.Process {
-	if filter == "" {
-		return m.processes
-	}
-
-	var filtered []process.Process
+func (m *model) filterProcesses(filter string) []*process.Item {
+	var filtered []*process.Item
 	for _, p := range m.processes {
-		if strings.Contains(strings.ToLower(p.Executable()), strings.ToLower(filter)) {
+		// Hide killed processes on new filter
+		if p.Status == process.Killed {
+			continue
+		}
+		if filter == "" || strings.Contains(strings.ToLower(p.Executable()), strings.ToLower(filter)) {
 			filtered = append(filtered, p)
 		}
 	}
 	return filtered
 }
 
-func (m *model) killProcess(pid int) tea.Cmd {
+func sendSignal(pid int, sig syscall.Signal) tea.Cmd {
 	return func() tea.Msg {
-		if err := process.KillProcess(pid); err != nil {
+		if err := process.SendSignal(pid, sig); err != nil {
 			return errMsg{err}
 		}
-		// After killing, we should refresh the process list.
-		return getProcesses()
+		return nil
 	}
 }
 
@@ -132,6 +200,8 @@ var (
 	docStyle      = lipgloss.NewStyle().Margin(1, 2)
 	selectedStyle = lipgloss.NewStyle().Background(lipgloss.Color("62")).Foreground(lipgloss.Color("255"))
 	faintStyle    = lipgloss.NewStyle().Faint(true)
+	killingStyle  = lipgloss.NewStyle().Strikethrough(true).Foreground(lipgloss.Color("9"))
+	pausedStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("220"))
 )
 
 const (
@@ -176,7 +246,14 @@ func (m model) View() string {
 	// Render viewport
 	for i := start; i < end; i++ {
 		p := m.filtered[i]
-		line := fmt.Sprintf("%-30s %d", p.Executable(), p.Pid())
+		line := fmt.Sprintf("%-20s %-10s %d", p.Executable(), p.User, p.Pid())
+
+		switch p.Status {
+		case process.Killed:
+			line = killingStyle.Render(line)
+		case process.Paused:
+			line = pausedStyle.Render(line)
+		}
 
 		if i == m.cursor {
 			fmt.Fprintln(&b, selectedStyle.Render("❯ "+line))
