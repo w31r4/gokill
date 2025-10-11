@@ -1,6 +1,9 @@
 package = github.com/w31r4/gokill
 
-.PHONY: release
+.PHONY: release test
+
+test:
+	go test -v ./...
 
 release:
 	mkdir -p release
