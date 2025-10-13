@@ -35,20 +35,23 @@ type model struct {
 }
 
 // InitialModel returns the initial model for the program
-func InitialModel(filter string) model {
+func InitialModel(filter string, procs []*process.Item) model {
 	ti := textinput.New()
 	ti.Placeholder = "Search processes"
 	ti.CharLimit = 156
 	ti.Width = 20
 	ti.SetValue(filter)
 
-	return model{
+	m := model{
+		processes: procs,
 		textInput: ti,
 	}
+	m.filtered = m.filterProcesses(filter)
+	return m
 }
 
 func (m model) Init() tea.Cmd {
-	return getProcesses
+	return nil
 }
 
 // getProcesses is a tea.Cmd that gets the list of processes.
@@ -75,6 +78,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	switch msg := msg.(type) {
 	case processesMsg:
+		m.processes = msg
 		m.processes = msg
 		m.filtered = m.filterProcesses(m.textInput.Value())
 		return m, nil
@@ -245,8 +249,8 @@ func (m model) View() string {
 		return fmt.Sprintf("\nError: %v\n\n", m.err)
 	}
 
-	if len(m.processes) == 0 {
-		return "Loading processes..."
+	if m.err != nil {
+		return fmt.Sprintf("\nError: %v\n\n", m.err)
 	}
 
 	if m.showDetails {
@@ -342,8 +346,8 @@ func (m model) View() string {
 }
 
 // Start is the entry point for the TUI.
-func Start(filter string) {
-	p := tea.NewProgram(InitialModel(filter))
+func Start(filter string, procs []*process.Item) {
+	p := tea.NewProgram(InitialModel(filter, procs))
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error running program: %v\n", err)
 		os.Exit(1)

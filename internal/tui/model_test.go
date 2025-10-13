@@ -9,13 +9,12 @@ import (
 )
 
 func TestUpdate(t *testing.T) {
-	m := InitialModel("")
-	m.processes = []*process.Item{
+	procs := []*process.Item{
 		process.NewItem(1, "foo", "test"),
 		process.NewItem(2, "bar", "test"),
 		process.NewItem(3, "baz", "test"),
 	}
-	m.filtered = m.processes
+	m := InitialModel("", procs)
 
 	// Test moving down
 	newModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyDown})
