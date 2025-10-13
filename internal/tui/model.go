@@ -17,16 +17,21 @@ import (
 // A message containing the list of processes.
 type processesMsg []*process.Item
 
+// A message containing the detailed info of a process.
+type processDetailsMsg string
+
 // A message containing an error.
 type errMsg struct{ err error }
 
 // model a struct to hold our application's state
 type model struct {
-	processes []*process.Item
-	filtered  []*process.Item
-	cursor    int
-	textInput textinput.Model
-	err       error
+	processes      []*process.Item
+	filtered       []*process.Item
+	cursor         int
+	textInput      textinput.Model
+	err            error
+	showDetails    bool
+	processDetails string
 }
 
 // InitialModel returns the initial model for the program
@@ -55,6 +60,16 @@ func getProcesses() tea.Msg {
 	return processesMsg(procs)
 }
 
+func getProcessDetails(pid int) tea.Cmd {
+	return func() tea.Msg {
+		details, err := process.GetProcessDetails(pid)
+		if err != nil {
+			return errMsg{err}
+		}
+		return processDetailsMsg(details)
+	}
+}
+
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 
@@ -62,6 +77,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case processesMsg:
 		m.processes = msg
 		m.filtered = m.filterProcesses(m.textInput.Value())
+		return m, nil
+
+	case processDetailsMsg:
+		m.processDetails = string(msg)
 		return m, nil
 
 	case errMsg:
@@ -74,6 +93,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyMsg:
+		if m.showDetails {
+			switch msg.String() {
+			case "q", "esc", "i":
+				m.showDetails = false
+				m.processDetails = "" // Clear details
+			}
+			return m, nil
+		}
+
 		if m.textInput.Focused() {
 			switch msg.String() {
 			case "enter", "esc":
@@ -119,6 +147,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					p.Status = process.Alive
 					return m, sendSignal(p.Pid(), syscall.SIGCONT)
 				}
+			}
+		case "i":
+			if len(m.filtered) > 0 {
+				m.showDetails = true
+				p := m.filtered[m.cursor]
+				return m, getProcessDetails(p.Pid())
 			}
 		}
 	}
@@ -215,6 +249,20 @@ func (m model) View() string {
 		return "Loading processes..."
 	}
 
+	if m.showDetails {
+		var b strings.Builder
+		fmt.Fprintln(&b, "Process Details")
+		if m.processDetails == "" {
+			fmt.Fprintln(&b, "\n  Loading...")
+		} else {
+			fmt.Fprintln(&b, "")
+			fmt.Fprint(&b, m.processDetails)
+		}
+		help := faintStyle.Render("\n\n q/esc/i: back to list")
+		fmt.Fprint(&b, help)
+		return docStyle.Render(b.String())
+	}
+
 	var b strings.Builder
 
 	// Header
@@ -229,7 +277,7 @@ func (m model) View() string {
 		if m.textInput.Focused() {
 			help += faintStyle.Render("enter/esc to exit search")
 		} else {
-			help += faintStyle.Render("q: quit, /: search, p: pause, r: resume, enter: kill, ctrl+r: refresh")
+			help += faintStyle.Render("q: quit, /: search, i: info, p: pause, r: resume, enter: kill, ctrl+r: refresh")
 		}
 		fmt.Fprint(&b, "\n"+help)
 
@@ -286,7 +334,7 @@ func (m model) View() string {
 	if m.textInput.Focused() {
 		help.WriteString(faintStyle.Render(" enter/esc to exit search"))
 	} else {
-		help.WriteString(faintStyle.Render(" /: search • ctrl+r: refresh • r: resume • p: pause • enter: kill • q: quit"))
+		help.WriteString(faintStyle.Render(" /: search • i: info • ctrl+r: refresh • r: resume • p: pause • enter: kill • q: quit"))
 	}
 	fmt.Fprint(&b, "\n"+help.String())
 

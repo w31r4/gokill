@@ -1,9 +1,12 @@
 package process
 
 import (
+	"fmt"
 	"os"
 	"sort"
+	"strings"
 	"syscall"
+	"time"
 
 	"github.com/shirou/gopsutil/v3/process"
 )
@@ -91,4 +94,49 @@ func SendSignal(pid int, sig syscall.Signal) error {
 		return err
 	}
 	return p.Signal(sig)
+}
+
+// GetProcessDetails returns detailed information about a process.
+func GetProcessDetails(pid int) (string, error) {
+	p, err := process.NewProcess(int32(pid))
+	if err != nil {
+		return "", fmt.Errorf("process with pid %d not found: %w", pid, err)
+	}
+
+	user, err := p.Username()
+	if err != nil {
+		user = "n/a"
+	}
+
+	cpuPercent, err := p.CPUPercent()
+	if err != nil {
+		// On the first call, it may return 0.0.
+		cpuPercent = 0.0
+	}
+
+	memPercent, err := p.MemoryPercent()
+	if err != nil {
+		memPercent = 0.0
+	}
+
+	createTime, err := p.CreateTime() // returns millis since epoch
+	startTime := "n/a"
+	if err == nil {
+		startTime = time.Unix(createTime/1000, 0).Format("Jan 02 15:04")
+	}
+
+	cmdline, err := p.Cmdline()
+	if err != nil || cmdline == "" {
+		cmdline, _ = p.Name()
+	}
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "  PID:\t%d\n", p.Pid)
+	fmt.Fprintf(&b, "  User:\t%s\n", user)
+	fmt.Fprintf(&b, "  %%CPU:\t%.1f\n", cpuPercent)
+	fmt.Fprintf(&b, "  %%MEM:\t%.1f\n", memPercent)
+	fmt.Fprintf(&b, "  Start:\t%s\n", startTime)
+	fmt.Fprintf(&b, "  Command:\t%s\n", cmdline)
+
+	return b.String(), nil
 }
