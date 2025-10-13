@@ -5,6 +5,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -59,32 +60,49 @@ func GetProcesses() ([]*Item, error) {
 		return nil, err
 	}
 
-	items := make([]*Item, 0, len(procs))
+	var wg sync.WaitGroup
+	itemChan := make(chan *Item, len(procs))
+
 	for _, p := range procs {
-		name, err := p.Name()
-		if err != nil {
-			// Skip processes we can't get a name for
-			continue
-		}
-		user, err := p.Username()
-		if err != nil {
-			// If we can't get the username, we can default it.
-			user = "n/a"
-		}
+		wg.Add(1)
+		go func(p *process.Process) {
+			defer wg.Done()
 
-		createTime, err := p.CreateTime()
-		startTime := "n/a"
-		if err == nil {
-			startTime = time.Unix(createTime/1000, 0).Format("15:04:05")
-		}
+			name, err := p.Name()
+			if err != nil {
+				// Skip processes we can't get a name for
+				return
+			}
+			user, err := p.Username()
+			if err != nil {
+				// If we can't get the username, we can default it.
+				user = "n/a"
+			}
+			createTime, err := p.CreateTime()
+			startTime := "n/a"
+			if err == nil {
+				startTime = time.Unix(createTime/1000, 0).Format("15:04:05")
+			}
 
-		items = append(items, &Item{
-			pid:        p.Pid,
-			executable: name,
-			User:       user,
-			StartTime:  startTime,
-			Status:     Alive,
-		})
+			itemChan <- &Item{
+				pid:        p.Pid,
+				executable: name,
+				User:       user,
+				StartTime:  startTime,
+				Status:     Alive,
+			}
+		}(p)
+	}
+
+	// Wait for all goroutines to finish and close the channel
+	go func() {
+		wg.Wait()
+		close(itemChan)
+	}()
+
+	items := make([]*Item, 0, len(procs))
+	for item := range itemChan {
+		items = append(items, item)
 	}
 
 	// Sort by executable name
