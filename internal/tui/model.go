@@ -308,7 +308,7 @@ func (m model) View() string {
 		case process.Paused:
 			status = "P"
 		}
-		line := fmt.Sprintf("[%s] %-20s %-10s %d", status, p.Executable(), p.User, p.Pid())
+		line := fmt.Sprintf("[%s] %-20s %-8s %-10s %d", status, p.Executable(), p.StartTime, p.User, p.Pid())
 
 		if i == m.cursor {
 			switch p.Status {

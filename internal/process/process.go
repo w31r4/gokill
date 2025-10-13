@@ -28,6 +28,7 @@ type Item struct {
 	pid        int32
 	executable string
 	User       string
+	StartTime  string
 	Status     Status
 }
 
@@ -71,10 +72,17 @@ func GetProcesses() ([]*Item, error) {
 			user = "n/a"
 		}
 
+		createTime, err := p.CreateTime()
+		startTime := "n/a"
+		if err == nil {
+			startTime = time.Unix(createTime/1000, 0).Format("15:04:05")
+		}
+
 		items = append(items, &Item{
 			pid:        p.Pid,
 			executable: name,
 			User:       user,
+			StartTime:  startTime,
 			Status:     Alive,
 		})
 	}
