@@ -3,6 +3,7 @@ package process
 import (
 	"fmt"
 	"os"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -60,52 +61,55 @@ func GetProcesses() ([]*Item, error) {
 		return nil, err
 	}
 
+	numWorkers := runtime.NumCPU()
+	tasks := make(chan *process.Process, len(procs))
+	results := make(chan *Item, len(procs))
+
 	var wg sync.WaitGroup
-	itemChan := make(chan *Item, len(procs))
-
-	for _, p := range procs {
+	for i := 0; i < numWorkers; i++ {
 		wg.Add(1)
-		go func(p *process.Process) {
+		go func() {
 			defer wg.Done()
-
-			name, err := p.Name()
-			if err != nil {
-				// Skip processes we can't get a name for
-				return
+			for p := range tasks {
+				name, err := p.Name()
+				if err != nil {
+					continue
+				}
+				user, err := p.Username()
+				if err != nil {
+					user = "n/a"
+				}
+				createTime, err := p.CreateTime()
+				startTime := "n/a"
+				if err == nil {
+					startTime = time.Unix(createTime/1000, 0).Format("15:04:05")
+				}
+				results <- &Item{
+					pid:        p.Pid,
+					executable: name,
+					User:       user,
+					StartTime:  startTime,
+					Status:     Alive,
+				}
 			}
-			user, err := p.Username()
-			if err != nil {
-				// If we can't get the username, we can default it.
-				user = "n/a"
-			}
-			createTime, err := p.CreateTime()
-			startTime := "n/a"
-			if err == nil {
-				startTime = time.Unix(createTime/1000, 0).Format("15:04:05")
-			}
-
-			itemChan <- &Item{
-				pid:        p.Pid,
-				executable: name,
-				User:       user,
-				StartTime:  startTime,
-				Status:     Alive,
-			}
-		}(p)
+		}()
 	}
 
-	// Wait for all goroutines to finish and close the channel
+	for _, p := range procs {
+		tasks <- p
+	}
+	close(tasks)
+
 	go func() {
 		wg.Wait()
-		close(itemChan)
+		close(results)
 	}()
 
 	items := make([]*Item, 0, len(procs))
-	for item := range itemChan {
+	for item := range results {
 		items = append(items, item)
 	}
 
-	// Sort by executable name
 	sort.Slice(items, func(i, j int) bool {
 		return items[i].Executable() < items[j].Executable()
 	})
