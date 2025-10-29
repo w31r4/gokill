@@ -35,9 +35,9 @@ func TestUpdate(t *testing.T) {
 func TestFilterProcesses(t *testing.T) {
 	m := model{
 		processes: []*process.Item{
-			process.NewItem(1, "foo", "test"),
+			process.NewItem(1, "foo", "test", 8080),
 			process.NewItem(2, "bar", "test"),
-			process.NewItem(3, "foobar", "test"),
+			process.NewItem(3, "foobar", "test", 5432),
 		},
 	}
 
@@ -54,5 +54,10 @@ func TestFilterProcesses(t *testing.T) {
 	filtered = m.filterProcesses("baz")
 	if len(filtered) != 0 {
 		t.Errorf("expected 0 processes, but got %d", len(filtered))
+	}
+
+	filtered = m.filterProcesses("8080")
+	if len(filtered) != 1 || filtered[0].Pid() != 1 {
+		t.Errorf("expected to find process with pid 1 for port search, but got %#v", filtered)
 	}
 }
