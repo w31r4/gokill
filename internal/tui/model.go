@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"syscall"
 
@@ -37,7 +38,7 @@ type model struct {
 // InitialModel returns the initial model for the program
 func InitialModel(filter string) model {
 	ti := textinput.New()
-	ti.Placeholder = "Search processes"
+	ti.Placeholder = "Search processes or ports"
 	ti.CharLimit = 156
 	ti.Width = 20
 	ti.SetValue(filter)
@@ -181,9 +182,12 @@ type fuzzyProcessSource struct {
 }
 
 // String returns the string to be matched for the item at index i.
-// We combine executable and PID to allow searching on both.
+// We combine executable, PID, and ports to allow searching on all of them.
 func (s fuzzyProcessSource) String(i int) string {
 	p := s.processes[i]
+	if ports := portsForSearch(p.Ports()); ports != "" {
+		return fmt.Sprintf("%s %d %s", p.Executable(), p.Pid(), ports)
+	}
 	return fmt.Sprintf("%s %d", p.Executable(), p.Pid())
 }
 
@@ -267,7 +271,7 @@ func (m model) View() string {
 
 	// Header
 	count := fmt.Sprintf("(%d/%d)", len(m.filtered), len(m.processes))
-	fmt.Fprintf(&b, "Search processes %s: %s\n\n", faintStyle.Render(count), m.textInput.View())
+	fmt.Fprintf(&b, "Search processes/ports %s: %s\n\n", faintStyle.Render(count), m.textInput.View())
 
 	// No results
 	if len(m.filtered) == 0 {
@@ -309,6 +313,9 @@ func (m model) View() string {
 			status = "P"
 		}
 		line := fmt.Sprintf("[%s] %-20s %-8s %-10s %d", status, p.Executable(), p.StartTime, p.User, p.Pid())
+		if ports := portsForDisplay(p.Ports()); ports != "" {
+			line = fmt.Sprintf("%s %s", line, ports)
+		}
 
 		if i == m.cursor {
 			switch p.Status {
@@ -339,6 +346,28 @@ func (m model) View() string {
 	fmt.Fprint(&b, "\n"+help.String())
 
 	return docStyle.Render(b.String())
+}
+
+func portsForSearch(ports []uint32) string {
+	if len(ports) == 0 {
+		return ""
+	}
+	return strings.Join(portsToStrings(ports), " ")
+}
+
+func portsForDisplay(ports []uint32) string {
+	if len(ports) == 0 {
+		return ""
+	}
+	return "Ports: " + strings.Join(portsToStrings(ports), ", ")
+}
+
+func portsToStrings(ports []uint32) []string {
+	parts := make([]string, len(ports))
+	for i, port := range ports {
+		parts[i] = strconv.FormatUint(uint64(port), 10)
+	}
+	return parts
 }
 
 // Start is the entry point for the TUI.
