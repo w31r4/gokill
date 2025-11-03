@@ -246,6 +246,7 @@ var (
 	faintStyle       = lipgloss.NewStyle().Faint(true)
 	killingStyle     = lipgloss.NewStyle().Strikethrough(true).Foreground(lipgloss.Color("9"))
 	pausedStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("220"))
+	listeningStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("220"))
 	paneStyle        = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(0, 1)
 	processPaneStyle = paneStyle.Copy().Width(60).BorderForeground(lipgloss.Color("62"))
 	portPaneStyle    = paneStyle.Copy().Width(20).BorderForeground(lipgloss.Color("220"))
@@ -342,21 +343,20 @@ func (m model) renderProcessPane() string {
 		}
 		line := fmt.Sprintf("[%s] %-20s %-8s %-10s %d", status, p.Executable, p.StartTime, p.User, p.Pid)
 
-		if i == m.cursor {
-			switch p.Status {
-			case process.Killed:
-				line = killingStyle.Render(line)
-			case process.Paused:
-				line = pausedStyle.Render(line)
+		switch p.Status {
+		case process.Killed:
+			line = killingStyle.Render(line)
+		case process.Paused:
+			line = pausedStyle.Render(line)
+		default:
+			if len(p.Ports) > 0 {
+				line = listeningStyle.Render(line)
 			}
+		}
+
+		if i == m.cursor {
 			fmt.Fprintln(&b, selectedStyle.Render("❯ "+line))
 		} else {
-			switch p.Status {
-			case process.Killed:
-				line = killingStyle.Render(line)
-			case process.Paused:
-				line = pausedStyle.Render(line)
-			}
 			fmt.Fprintln(&b, "  "+faintStyle.Render(line))
 		}
 	}
