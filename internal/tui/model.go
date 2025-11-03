@@ -241,11 +241,14 @@ func sendSignal(pid int, sig syscall.Signal) tea.Cmd {
 }
 
 var (
-	docStyle      = lipgloss.NewStyle().Margin(1, 2)
-	selectedStyle = lipgloss.NewStyle().Background(lipgloss.Color("62")).Foreground(lipgloss.Color("255"))
-	faintStyle    = lipgloss.NewStyle().Faint(true)
-	killingStyle  = lipgloss.NewStyle().Strikethrough(true).Foreground(lipgloss.Color("9"))
-	pausedStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("220"))
+	docStyle         = lipgloss.NewStyle().Margin(1, 2)
+	selectedStyle    = lipgloss.NewStyle().Background(lipgloss.Color("62")).Foreground(lipgloss.Color("255"))
+	faintStyle       = lipgloss.NewStyle().Faint(true)
+	killingStyle     = lipgloss.NewStyle().Strikethrough(true).Foreground(lipgloss.Color("9"))
+	pausedStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("220"))
+	paneStyle        = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(0, 1)
+	processPaneStyle = paneStyle.Copy().Width(60).BorderForeground(lipgloss.Color("62"))
+	portPaneStyle    = paneStyle.Copy().Width(20).BorderForeground(lipgloss.Color("220"))
 )
 
 const (
@@ -262,39 +265,56 @@ func (m model) View() string {
 	}
 
 	if m.showDetails {
-		var b strings.Builder
-		fmt.Fprintln(&b, "Process Details")
-		if m.processDetails == "" {
-			fmt.Fprintln(&b, "\n  Loading...")
-		} else {
-			fmt.Fprintln(&b, "")
-			fmt.Fprint(&b, m.processDetails)
-		}
-		help := faintStyle.Render("\n\n q/esc/i: back to list")
-		fmt.Fprint(&b, help)
-		return docStyle.Render(b.String())
+		return m.renderDetailsView()
 	}
 
-	var b strings.Builder
+	header := m.renderHeader()
+	footer := m.renderFooter()
 
-	// Header
-	count := fmt.Sprintf("(%d/%d)", len(m.filtered), len(m.processes))
-	fmt.Fprintf(&b, "Search processes/ports %s: %s\n\n", faintStyle.Render(count), m.textInput.View())
-
-	// No results
 	if len(m.filtered) == 0 {
-		fmt.Fprintln(&b, "  No results...")
-		// Footer
-		help := "  "
-		if m.textInput.Focused() {
-			help += faintStyle.Render("enter/esc to exit search")
-		} else {
-			help += faintStyle.Render("q: quit, /: search, i: info, p: pause, r: resume, enter: kill, ctrl+r: refresh")
-		}
-		fmt.Fprint(&b, "\n"+help)
-
-		return docStyle.Render(b.String())
+		noResults := "  No results..."
+		return docStyle.Render(lipgloss.JoinVertical(lipgloss.Left, header, noResults, footer))
 	}
+
+	processPane := m.renderProcessPane()
+	portPane := m.renderPortPane()
+
+	mainContent := lipgloss.JoinHorizontal(lipgloss.Top, processPane, portPane)
+
+	return docStyle.Render(lipgloss.JoinVertical(lipgloss.Left, header, mainContent, footer))
+}
+
+func (m model) renderDetailsView() string {
+	var b strings.Builder
+	fmt.Fprintln(&b, "Process Details")
+	if m.processDetails == "" {
+		fmt.Fprintln(&b, "\n  Loading...")
+	} else {
+		fmt.Fprintln(&b, "")
+		fmt.Fprint(&b, m.processDetails)
+	}
+	help := faintStyle.Render("\n\n q/esc/i: back to list")
+	fmt.Fprint(&b, help)
+	return docStyle.Render(b.String())
+}
+
+func (m model) renderHeader() string {
+	count := fmt.Sprintf("(%d/%d)", len(m.filtered), len(m.processes))
+	return fmt.Sprintf("Search processes/ports %s: %s", faintStyle.Render(count), m.textInput.View())
+}
+
+func (m model) renderFooter() string {
+	var help strings.Builder
+	if m.textInput.Focused() {
+		help.WriteString(faintStyle.Render(" enter/esc to exit search"))
+	} else {
+		help.WriteString(faintStyle.Render(" /: search • i: info • ctrl+r: refresh • r: resume • p: pause • enter: kill • q: quit"))
+	}
+	return help.String()
+}
+
+func (m model) renderProcessPane() string {
+	var b strings.Builder
 
 	// Viewport calculation
 	start := m.cursor - viewHeight/2
@@ -321,9 +341,6 @@ func (m model) View() string {
 			status = "P"
 		}
 		line := fmt.Sprintf("[%s] %-20s %-8s %-10s %d", status, p.Executable, p.StartTime, p.User, p.Pid)
-		if ports := portsForDisplay(p.Ports); ports != "" {
-			line = fmt.Sprintf("%s %s", line, ports)
-		}
 
 		if i == m.cursor {
 			switch p.Status {
@@ -344,16 +361,29 @@ func (m model) View() string {
 		}
 	}
 
-	// Footer
-	var help strings.Builder
-	if m.textInput.Focused() {
-		help.WriteString(faintStyle.Render(" enter/esc to exit search"))
-	} else {
-		help.WriteString(faintStyle.Render(" /: search • i: info • ctrl+r: refresh • r: resume • p: pause • enter: kill • q: quit"))
-	}
-	fmt.Fprint(&b, "\n"+help.String())
+	return processPaneStyle.Render(b.String())
+}
 
-	return docStyle.Render(b.String())
+func (m model) renderPortPane() string {
+	var b strings.Builder
+	fmt.Fprintln(&b, "Listening Ports")
+	fmt.Fprintln(&b, "")
+
+	if len(m.filtered) == 0 || m.cursor >= len(m.filtered) {
+		fmt.Fprintln(&b, "  n/a")
+		return portPaneStyle.Render(b.String())
+	}
+
+	p := m.filtered[m.cursor]
+	if len(p.Ports) == 0 {
+		fmt.Fprintln(&b, "  (none)")
+	} else {
+		for _, port := range p.Ports {
+			fmt.Fprintf(&b, "  %d\n", port)
+		}
+	}
+
+	return portPaneStyle.Render(b.String())
 }
 
 func portsForSearch(ports []uint32) string {
@@ -361,13 +391,6 @@ func portsForSearch(ports []uint32) string {
 		return ""
 	}
 	return strings.Join(portsToStrings(ports), " ")
-}
-
-func portsForDisplay(ports []uint32) string {
-	if len(ports) == 0 {
-		return ""
-	}
-	return "Ports: " + strings.Join(portsToStrings(ports), ", ")
 }
 
 func portsToStrings(ports []uint32) []string {
