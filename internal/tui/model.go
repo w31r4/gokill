@@ -49,8 +49,8 @@ type model struct {
 	// textInput 是一个来自 `bubbles/textinput` 库的组件，用于处理用户的文本输入。
 	textInput textinput.Model
 	// err 用于存储在应用运行过程中可能发生的错误，以便在界面上显示。
-	err       error
-	warnings  []error
+	err      error
+	warnings []error
 	// showDetails 是一个布尔标志，用于控制是显示进程列表还是显示单个进程的详细信息视图。
 	showDetails bool
 	// processDetails 存储从 `GetProcessDetails` 获取到的详细信息字符串。
@@ -305,8 +305,9 @@ func sendSignal(pid int, sig syscall.Signal) tea.Cmd {
 // 使用 `charmbracelet/lipgloss` 库来定义TUI的样式。
 // 这种方式使得样式的管理和复用变得非常方便。
 var (
-	// docStyle 是整个应用的基础样式，设置了外边距。
-	docStyle = lipgloss.NewStyle().Margin(1, 2)
+    // docStyle 是整个应用的基础样式，设置了外边距。
+    // 收紧整体上下外边距让界面更紧凑。
+    docStyle = lipgloss.NewStyle().Margin(0, 1)
 	// selectedStyle 是当前光标选中行的样式，设置了背景色和前景色。
 	selectedStyle = lipgloss.NewStyle().Background(lipgloss.Color("62")).Foreground(lipgloss.Color("255"))
 	// faintStyle 用于渲染次要信息（如帮助文本），使其颜色变淡。
@@ -317,12 +318,13 @@ var (
 	pausedStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("220"))
 	// listeningStyle 是监听端口的进程的样式，同样使用黄色以保持一致性。
 	listeningStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("220"))
-	// paneStyle 是左右两个面板的基础样式，定义了圆角边框和内边距。
-	paneStyle = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(0, 1)
-	// processPaneStyle 是左侧进程列表面板的样式，继承自 paneStyle 并设置了宽度和边框颜色。
-	processPaneStyle = paneStyle.Copy().Width(60).BorderForeground(lipgloss.Color("62"))
-	// portPaneStyle 是右侧端口列表面板的样式，继承自 paneStyle 并设置了宽度和边框颜色。
-	portPaneStyle = paneStyle.Copy().Width(20).BorderForeground(lipgloss.Color("220"))
+    // paneStyle 是左右两个面板的基础样式，定义了圆角边框和内边距。
+    paneStyle = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(0, 1)
+    // processPaneStyle 是左侧进程列表面板的样式，继承自 paneStyle 并设置了宽度和边框颜色。
+    processPaneStyle = paneStyle.Copy().Width(60).BorderForeground(lipgloss.Color("62"))
+    // portPaneStyle 是右侧端口列表面板的样式，继承自 paneStyle 并设置了宽度和边框颜色。
+    // 取消固定高度与居中对齐，避免出现大量垂直空白；减小宽度使其更紧凑。
+    portPaneStyle = paneStyle.Copy().Width(16).BorderForeground(lipgloss.Color("220")).Align(lipgloss.Left)
 )
 
 // 定义了进程列表视口（Viewport）的高度，即一次显示多少行。
@@ -461,35 +463,35 @@ func (m model) renderProcessPane() string {
 		}
 	}
 
-	return processPaneStyle.Render(b.String())
+    // 去掉末尾多余的换行，避免左侧列表底部出现空行。
+    return processPaneStyle.Render(strings.TrimRight(b.String(), "\n"))
 }
 
 // renderPortPane 负责渲染右侧的端口信息面板。
 func (m model) renderPortPane() string {
-	var b strings.Builder
-	fmt.Fprintln(&b, "Listening Ports")
-	fmt.Fprintln(&b, "")
+    var b strings.Builder
+    fmt.Fprintln(&b, "Listening Ports")
 
 	// 如果没有进程或光标无效，则显示 n/a。
-	if len(m.filtered) == 0 || m.cursor >= len(m.filtered) {
-		fmt.Fprintln(&b, "  n/a")
-		return portPaneStyle.Render(b.String())
-	}
+    if len(m.filtered) == 0 || m.cursor >= len(m.filtered) {
+        fmt.Fprintln(&b, faintStyle.Render("(n/a)"))
+        return portPaneStyle.Render(strings.TrimRight(b.String(), "\n"))
+    }
 
 	// 获取当前光标选中的进程。
 	p := m.filtered[m.cursor]
-	if len(p.Ports) == 0 {
-		// 如果该进程没有监听任何端口，则显示 (none)。
-		fmt.Fprintln(&b, "  (none)")
-	} else {
-		// 否则，逐行显示所有监听的端口号。
-		for _, port := range p.Ports {
-			fmt.Fprintf(&b, "  %d\n", port)
-		}
-	}
+    if len(p.Ports) == 0 {
+        // 如果该进程没有监听任何端口，则显示 (none)。
+        fmt.Fprintln(&b, faintStyle.Render("(none)"))
+    } else {
+        // 否则，逐行显示所有监听的端口号。
+        for _, port := range p.Ports {
+            fmt.Fprintln(&b, fmt.Sprintf("%d", port))
+        }
+    }
 
 	// 应用端口面板的样式。
-	return portPaneStyle.Render(b.String())
+    return portPaneStyle.Render(strings.TrimRight(b.String(), "\n"))
 }
 
 // portsForSearch 是一个辅助函数，将端口号列表转换为一个用空格分隔的字符串，
