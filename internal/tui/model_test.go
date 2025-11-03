@@ -57,7 +57,7 @@ func TestFilterProcesses(t *testing.T) {
 	}
 
 	filtered = m.filterProcesses("8080")
-	if len(filtered) != 1 || filtered[0].Pid() != 1 {
+	if len(filtered) != 1 || filtered[0].Pid != 1 {
 		t.Errorf("expected to find process with pid 1 for port search, but got %#v", filtered)
 	}
 }
