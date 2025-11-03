@@ -43,13 +43,18 @@ func InitialModel(filter string) model {
 	ti.Width = 20
 	ti.SetValue(filter)
 
-	return model{
+	cached, _ := process.Load()
+
+	m := model{
 		textInput: ti,
+		processes: cached,
 	}
+	m.filtered = m.filterProcesses(filter)
+	return m
 }
 
 func (m model) Init() tea.Cmd {
-	return getProcesses
+	return tea.Batch(m.textInput.Focus(), getProcesses)
 }
 
 // getProcesses is a tea.Cmd that gets the list of processes.
@@ -78,7 +83,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case processesMsg:
 		m.processes = msg
 		m.filtered = m.filterProcesses(m.textInput.Value())
-		return m, nil
+		return m, func() tea.Msg {
+			_ = process.Save(m.processes)
+			return nil
+		}
 
 	case processDetailsMsg:
 		m.processDetails = string(msg)
@@ -133,27 +141,27 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if len(m.filtered) > 0 {
 				p := m.filtered[m.cursor]
 				p.Status = process.Killed
-				return m, sendSignal(p.Pid(), syscall.SIGTERM)
+				return m, sendSignal(int(p.Pid), syscall.SIGTERM)
 			}
 		case "p":
 			if len(m.filtered) > 0 {
 				p := m.filtered[m.cursor]
 				p.Status = process.Paused
-				return m, sendSignal(p.Pid(), syscall.SIGSTOP)
+				return m, sendSignal(int(p.Pid), syscall.SIGSTOP)
 			}
 		case "r":
 			if len(m.filtered) > 0 {
 				p := m.filtered[m.cursor]
 				if p.Status == process.Paused {
 					p.Status = process.Alive
-					return m, sendSignal(p.Pid(), syscall.SIGCONT)
+					return m, sendSignal(int(p.Pid), syscall.SIGCONT)
 				}
 			}
 		case "i":
 			if len(m.filtered) > 0 {
 				m.showDetails = true
 				p := m.filtered[m.cursor]
-				return m, getProcessDetails(p.Pid())
+				return m, getProcessDetails(int(p.Pid))
 			}
 		}
 	}
@@ -185,10 +193,10 @@ type fuzzyProcessSource struct {
 // We combine executable, PID, and ports to allow searching on all of them.
 func (s fuzzyProcessSource) String(i int) string {
 	p := s.processes[i]
-	if ports := portsForSearch(p.Ports()); ports != "" {
-		return fmt.Sprintf("%s %d %s", p.Executable(), p.Pid(), ports)
+	if ports := portsForSearch(p.Ports); ports != "" {
+		return fmt.Sprintf("%s %d %s", p.Executable, p.Pid, ports)
 	}
-	return fmt.Sprintf("%s %d", p.Executable(), p.Pid())
+	return fmt.Sprintf("%s %d", p.Executable, p.Pid)
 }
 
 // Len returns the number of items in the collection.
@@ -312,8 +320,8 @@ func (m model) View() string {
 		case process.Paused:
 			status = "P"
 		}
-		line := fmt.Sprintf("[%s] %-20s %-8s %-10s %d", status, p.Executable(), p.StartTime, p.User, p.Pid())
-		if ports := portsForDisplay(p.Ports()); ports != "" {
+		line := fmt.Sprintf("[%s] %-20s %-8s %-10s %d", status, p.Executable, p.StartTime, p.User, p.Pid)
+		if ports := portsForDisplay(p.Ports); ports != "" {
 			line = fmt.Sprintf("%s %s", line, ports)
 		}
 

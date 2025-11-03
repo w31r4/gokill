@@ -3,8 +3,10 @@ package process
 import (
 	"fmt"
 	"os"
+	"runtime"
 	"sort"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -25,12 +27,12 @@ const (
 
 // Item represents a process in our list.
 type Item struct {
-	pid        int32
-	executable string
-	User       string
-	StartTime  string
-	Status     Status
-	ports      []uint32
+	Pid        int32    `json:"pid"`
+	Executable string   `json:"executable"`
+	User       string   `json:"user"`
+	StartTime  string   `json:"startTime"`
+	Status     Status   `json:"status"`
+	Ports      []uint32 `json:"ports"`
 }
 
 // NewItem creates a new Item for testing purposes.
@@ -49,27 +51,12 @@ func NewItem(pid int, executable, user string, ports ...int) *Item {
 	}
 
 	return &Item{
-		pid:        int32(pid),
-		executable: executable,
+		Pid:        int32(pid),
+		Executable: executable,
 		User:       user,
 		Status:     Alive,
-		ports:      portList,
+		Ports:      portList,
 	}
-}
-
-// Pid returns the process ID.
-func (i *Item) Pid() int {
-	return int(i.pid)
-}
-
-// Executable returns the process executable name.
-func (i *Item) Executable() string {
-	return i.executable
-}
-
-// Ports returns the list of ports the process is listening on.
-func (i *Item) Ports() []uint32 {
-	return i.ports
 }
 
 // GetProcesses returns a list of all processes, wrapped in our Item struct.
@@ -79,40 +66,61 @@ func GetProcesses() ([]*Item, error) {
 		return nil, err
 	}
 
-	items := make([]*Item, 0, len(procs))
+	numWorkers := runtime.NumCPU()
+	jobs := make(chan *process.Process, len(procs))
+	results := make(chan *Item, len(procs))
+
+	var wg sync.WaitGroup
+	for w := 0; w < numWorkers; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for p := range jobs {
+				name, err := p.Name()
+				if err != nil {
+					continue
+				}
+				user, err := p.Username()
+				if err != nil {
+					user = "n/a"
+				}
+
+				createTime, err := p.CreateTime()
+				startTime := "n/a"
+				if err == nil {
+					startTime = time.Unix(createTime/1000, 0).Format("15:04:05")
+				}
+
+				ports := getProcessPorts(p)
+
+				results <- &Item{
+					Pid:        p.Pid,
+					Executable: name,
+					User:       user,
+					StartTime:  startTime,
+					Status:     Alive,
+					Ports:      ports,
+				}
+			}
+		}()
+	}
+
 	for _, p := range procs {
-		name, err := p.Name()
-		if err != nil {
-			// Skip processes we can't get a name for
-			continue
-		}
-		user, err := p.Username()
-		if err != nil {
-			// If we can't get the username, we can default it.
-			user = "n/a"
-		}
+		jobs <- p
+	}
+	close(jobs)
 
-		createTime, err := p.CreateTime()
-		startTime := "n/a"
-		if err == nil {
-			startTime = time.Unix(createTime/1000, 0).Format("15:04:05")
-		}
+	wg.Wait()
+	close(results)
 
-		ports := getProcessPorts(p)
-
-		items = append(items, &Item{
-			pid:        p.Pid,
-			executable: name,
-			User:       user,
-			StartTime:  startTime,
-			Status:     Alive,
-			ports:      ports,
-		})
+	items := make([]*Item, 0, len(procs))
+	for item := range results {
+		items = append(items, item)
 	}
 
 	// Sort by executable name
 	sort.Slice(items, func(i, j int) bool {
-		return items[i].Executable() < items[j].Executable()
+		return items[i].Executable < items[j].Executable
 	})
 
 	return items, nil
