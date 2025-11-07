@@ -112,7 +112,7 @@ graph TD
 4.  `Update` 函数接收到 `tea.KeyMsg`，判断按键类型：
     *   如果是 `j`/`k`，则修改 `model.cursor` 的值来移动光标。
     *   如果是 `/`，则激活搜索框。
-    *   如果是 `enter`，则返回一个 `sendSignal` 命令来杀死进程。
+    *   如果是 `enter/p/r`，则返回一个 `sendSignalWithStatus` 命令向选中进程发送信号；仅当命令成功返回后，才会接收一条 `signalOKMsg` 来更新 UI 中该进程的 `Status`。
 5.  每次 `Update` 函数返回后，`Bubble Tea` 都会自动调用 `View` 函数，使用更新后的 `model` 来重绘界面。
 
 这个循环不断重复，构成了整个应用的交互逻辑。
@@ -125,3 +125,45 @@ graph TD
 2.  **保存 (`Save`)**: 当 `Update` 函数收到新的进程列表 (`processesLoadedMsg`) 时，它会返回一个命令，该命令在后台异步调用 `Save()`，将新的列表写入缓存文件，为下一次启动做准备。
 
 这个机制确保了即使在获取实时数据需要几秒钟的情况下，用户也能立即看到一个可交互的界面。
+
+## 新增与可配置点
+
+### A. Warnings 聚合避免阻塞
+
+在并发采集进程信息时，每个进程可能产生多条非致命警告。为了避免 `warnings` 通道因容量不足导致 worker 阻塞：
+
+- 使用小容量 `warnings` 通道并启动后台聚合 goroutine 持续读取；
+- 在完成后关闭通道并 `wait` 聚合器，统一返回 `[]error`；
+- 相关实现：
+  - `internal/process/process.go:95-111` 创建与聚合；
+  - `internal/process/process.go:188-199` 关闭并等待；
+  - 返回结果：`internal/process/process.go:206-207`。
+
+### B. 端口扫描可开关
+
+全量扫描端口性能开销大，且在部分系统需要更高权限。现通过环境变量控制：
+
+- `GOKILL_SCAN_PORTS` 为空/`1`/`true`/`yes` 时启用扫描；其他值禁用；
+- 列表与详情视图都受该开关控制；
+- 相关实现：
+  - 列表采集时是否扫描：`internal/process/process.go:126-156`；
+  - 详情视图端口：`internal/process/process.go:264-268`；
+  - 开关函数：`internal/process/process.go:324-333`。
+
+### C. 信号成功后再更新 UI 状态
+
+避免信号发送失败导致 UI 状态错误：
+
+- 新增 `signalOKMsg`，仅在 `SendSignal` 成功后回传，`Update` 收到后更新 `Item.Status`；
+- 新增 `sendSignalWithStatus` 命令封装（代替直接改状态）；
+- 相关实现：
+  - 新消息与处理：`internal/tui/model.go:38-42,156-165`；
+  - 命令函数：`internal/tui/model.go:318-326`；
+  - 按键处理：`internal/tui/model.go:204-219`。
+
+### D. CPU 百分比二次采样
+
+`gopsutil` 的 `CPUPercent()` 首次采样常为 0。为更可信的展示：
+
+- 若首次采样为 0，则 `sleep 200ms` 后再采样一次；
+- 相关实现：`internal/process/process.go:231-240`。

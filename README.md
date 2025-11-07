@@ -35,8 +35,23 @@ Run `gokill` in your terminal to start the interactive interface. You can immedi
 | `esc` | Exit search mode |
 | `p` | Pause selected process (SIGSTOP) |
 | `r` | Resume selected process (SIGCONT) |
+| `i` | Show process details |
 | `ctrl+r` | Refresh process list |
 | `q`/`ctrl+c` | Quit |
+
+### Details Mode
+
+Press `i` on a selected process to open a details view showing PID, user, CPU/MEM, start time, and command. Press `q`, `esc`, or `i` again to return.
+
+### Port Scanning (optional)
+
+By default, gokill scans listening ports for processes displayed in the list and in the details view. This can be slow or require elevated privileges on some systems. To disable port scanning, set:
+
+```sh
+export GOKILL_SCAN_PORTS=0
+```
+
+When disabled, the list won’t highlight listeners and the details view won’t include the Ports line.
 
 ## Related
 

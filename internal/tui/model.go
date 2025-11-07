@@ -35,6 +35,12 @@ type processDetailsMsg string
 // errMsg 用于在发生错误时，将错误信息传递给 Update 方法进行处理和显示。
 type errMsg struct{ err error }
 
+// signalOKMsg 表示进程信号发送成功的反馈消息，用于在 UI 中更新状态。
+type signalOKMsg struct {
+    pid    int
+    status process.Status
+}
+
 // --- 应用状态模型 ---
 // model 结构体是 Bubble Tea 应用的核心，它包含了应用在任何时刻的所有状态。
 // 它是UI的“单一数据源”（Single Source of Truth）。View 函数会根据这个 model 的数据来渲染界面，
@@ -122,15 +128,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	// 1. 处理异步获取到的进程列表
 	// 1. Handle the arrival of the process list and any associated warnings.
-	case processesLoadedMsg:
-		m.processes = msg.processes                         // Update the full process list cache.
-		m.warnings = msg.warnings                           // Store any warnings.
-		m.filtered = m.filterProcesses(m.textInput.Value()) // Re-filter based on the current search term.
-		// Return a command to asynchronously save the new process list to the cache file.
-		return m, func() tea.Msg {
-			_ = process.Save(m.processes)
-			return nil // This command doesn't need to trigger any subsequent updates.
-		}
+    case processesLoadedMsg:
+        m.processes = msg.processes                         // Update the full process list cache.
+        m.warnings = msg.warnings                           // Store any warnings.
+        m.filtered = m.filterProcesses(m.textInput.Value()) // Re-filter based on the current search term.
+        // Return a command to asynchronously save the new process list to the cache file.
+        return m, func() tea.Msg {
+            _ = process.Save(m.processes)
+            return nil // This command doesn't need to trigger any subsequent updates.
+        }
 
 	// 2. 处理异步获取到的进程详情
 	case processDetailsMsg:
@@ -138,14 +144,25 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil                  // 不需要执行新的命令
 
 	// 3. 处理错误消息
-	case errMsg:
-		// 我们只显示错误信息，但有一种特殊情况需要忽略：
-		// 当我们尝试操作一个已经结束的进程时，会收到 "process already finished" 错误，
-		// 这在并发场景下是正常现象，直接忽略即可，避免不必要的信息干扰用户。
-		if !strings.Contains(msg.err.Error(), "process already finished") {
-			m.err = msg.err
-		}
-		return m, nil
+    case errMsg:
+        // 我们只显示错误信息，但有一种特殊情况需要忽略：
+        // 当我们尝试操作一个已经结束的进程时，会收到 "process already finished" 错误，
+        // 这在并发场景下是正常现象，直接忽略即可，避免不必要的信息干扰用户。
+        if !strings.Contains(msg.err.Error(), "process already finished") {
+            m.err = msg.err
+        }
+        return m, nil
+
+    // 处理信号成功消息：在成功后才更新 UI 状态，避免失败导致的 UI 错乱。
+    case signalOKMsg:
+        for _, it := range m.processes {
+            if int(it.Pid) == msg.pid {
+                it.Status = msg.status
+                break
+            }
+        }
+        // 由于 filtered 指向同一批指针，直接返回并让 View 重新渲染即可。
+        return m, nil
 
 	// 4. 处理用户按键输入
 	case tea.KeyMsg:
@@ -184,26 +201,23 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.cursor < len(m.filtered)-1 {
 				m.cursor++
 			}
-		case "enter":
-			if len(m.filtered) > 0 {
-				p := m.filtered[m.cursor]
-				p.Status = process.Killed
-				return m, sendSignal(int(p.Pid), syscall.SIGTERM)
-			}
-		case "p":
-			if len(m.filtered) > 0 {
-				p := m.filtered[m.cursor]
-				p.Status = process.Paused
-				return m, sendSignal(int(p.Pid), syscall.SIGSTOP)
-			}
-		case "r":
-			if len(m.filtered) > 0 {
-				p := m.filtered[m.cursor]
-				if p.Status == process.Paused {
-					p.Status = process.Alive
-					return m, sendSignal(int(p.Pid), syscall.SIGCONT)
-				}
-			}
+        case "enter":
+            if len(m.filtered) > 0 {
+                p := m.filtered[m.cursor]
+                return m, sendSignalWithStatus(int(p.Pid), syscall.SIGTERM, process.Killed)
+            }
+        case "p":
+            if len(m.filtered) > 0 {
+                p := m.filtered[m.cursor]
+                return m, sendSignalWithStatus(int(p.Pid), syscall.SIGSTOP, process.Paused)
+            }
+        case "r":
+            if len(m.filtered) > 0 {
+                p := m.filtered[m.cursor]
+                if p.Status == process.Paused {
+                    return m, sendSignalWithStatus(int(p.Pid), syscall.SIGCONT, process.Alive)
+                }
+            }
 		case "i":
 			if len(m.filtered) > 0 {
 				m.showDetails = true
@@ -290,15 +304,25 @@ func (m *model) filterProcesses(filter string) []*process.Item {
 
 // sendSignal 是一个命令工厂函数，用于创建一个向指定PID进程发送信号的命令。
 func sendSignal(pid int, sig syscall.Signal) tea.Cmd {
-	return func() tea.Msg {
-		// 在 Goroutine 中执行实际的信号发送操作。
-		if err := process.SendSignal(pid, sig); err != nil {
-			// 如果失败，返回一个错误消息。
-			return errMsg{err}
-		}
-		// 成功则返回 nil，表示此命令不需要触发任何状态更新。
-		return nil
-	}
+    return func() tea.Msg {
+        // 在 Goroutine 中执行实际的信号发送操作。
+        if err := process.SendSignal(pid, sig); err != nil {
+            // 如果失败，返回一个错误消息。
+            return errMsg{err}
+        }
+        // 成功则返回 nil，表示此命令不需要触发任何状态更新。
+        return nil
+    }
+}
+
+// sendSignalWithStatus 仅在信号发送成功后回传一条消息，用于更新 UI 中的进程状态。
+func sendSignalWithStatus(pid int, sig syscall.Signal, status process.Status) tea.Cmd {
+    return func() tea.Msg {
+        if err := process.SendSignal(pid, sig); err != nil {
+            return errMsg{err}
+        }
+        return signalOKMsg{pid: pid, status: status}
+    }
 }
 
 // --- UI 样式定义 ---
