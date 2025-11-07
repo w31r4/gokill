@@ -1,11 +1,12 @@
 package tui
 
 import (
-	"fmt"
-	"os"
-	"strconv"
-	"strings"
-	"syscall"
+    "fmt"
+    "os"
+    "sort"
+    "strconv"
+    "strings"
+    "syscall"
 
 	"github.com/w31r4/gokill/internal/process"
 
@@ -59,8 +60,10 @@ type model struct {
 	warnings []error
 	// showDetails 是一个布尔标志，用于控制是显示进程列表还是显示单个进程的详细信息视图。
 	showDetails bool
-	// processDetails 存储从 `GetProcessDetails` 获取到的详细信息字符串。
-	processDetails string
+    // processDetails 存储从 `GetProcessDetails` 获取到的详细信息字符串。
+    processDetails string
+    // portsOnly 为 true 时，仅显示监听端口的进程。
+    portsOnly bool
 }
 
 // InitialModel 创建并返回应用的初始状态模型。
@@ -193,6 +196,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "/":
 			m.textInput.Focus()
 			return m, nil
+		case "P":
+			// 切换“仅显示占用端口的进程”模式
+			m.portsOnly = !m.portsOnly
+			m.filtered = m.filterProcesses(m.textInput.Value())
+			return m, nil
 		case "up", "k":
 			if m.cursor > 0 {
 				m.cursor--
@@ -273,16 +281,25 @@ func (s fuzzyProcessSource) Len() int {
 
 // filterProcesses 根据给定的过滤字符串（filter）来筛选进程列表。
 func (m *model) filterProcesses(filter string) []*process.Item {
-	var filtered []*process.Item
-	// 如果过滤字符串为空，我们不过滤，而是返回所有未被杀死的进程。
-	if filter == "" {
-		for _, p := range m.processes {
-			if p.Status != process.Killed {
-				filtered = append(filtered, p)
-			}
-		}
-		return filtered
-	}
+    var filtered []*process.Item
+    // 如果过滤字符串为空，我们不过滤，而是返回所有未被杀死的进程。
+    if filter == "" {
+        for _, p := range m.processes {
+            if p.Status != process.Killed {
+                if m.portsOnly && len(p.Ports) == 0 {
+                    continue
+                }
+                filtered = append(filtered, p)
+            }
+        }
+        if m.portsOnly {
+            sort.SliceStable(filtered, func(i, j int) bool {
+                // 端口列表在采集时已升序，这里取第一个端口作为排序键
+                return filtered[i].Ports[0] < filtered[j].Ports[0]
+            })
+        }
+        return filtered
+    }
 
 	// 如果有过滤条件，则使用模糊搜索。
 	// 1. 创建一个 `fuzzyProcessSource` 实例。
@@ -291,15 +308,24 @@ func (m *model) filterProcesses(filter string) []*process.Item {
 	matches := fuzzy.FindFrom(filter, source)
 
 	// 3. 根据匹配结果，从原始的 `m.processes` 列表中构建出过滤后的列表。
-	for _, match := range matches {
-		p := m.processes[match.Index]
-		// 同样，我们只包括未被杀死的进程。
-		if p.Status != process.Killed {
-			filtered = append(filtered, p)
-		}
-	}
+    for _, match := range matches {
+        p := m.processes[match.Index]
+        // 同样，我们只包括未被杀死的进程。
+        if p.Status != process.Killed {
+            if m.portsOnly && len(p.Ports) == 0 {
+                continue
+            }
+            filtered = append(filtered, p)
+        }
+    }
 
-	return filtered
+    if m.portsOnly {
+        sort.SliceStable(filtered, func(i, j int) bool {
+            return filtered[i].Ports[0] < filtered[j].Ports[0]
+        })
+    }
+
+    return filtered
 }
 
 // sendSignal 是一个命令工厂函数，用于创建一个向指定PID进程发送信号的命令。
@@ -413,27 +439,31 @@ func (m model) renderDetailsView() string {
 
 // renderHeader 负责渲染应用的头部区域，主要包括搜索框和进程计数。
 func (m model) renderHeader() string {
-	var warnings string
-	if len(m.warnings) > 0 {
-		warnings = faintStyle.Render(fmt.Sprintf(" (%d warnings)", len(m.warnings)))
-	}
-	// Display "(filtered_count/total_count)"
-	count := fmt.Sprintf("(%d/%d)", len(m.filtered), len(m.processes))
-	// Join title, count, warnings, and the text input view.
-	return fmt.Sprintf("Search processes/ports %s%s: %s", faintStyle.Render(count), warnings, m.textInput.View())
+    var warnings string
+    if len(m.warnings) > 0 {
+        warnings = faintStyle.Render(fmt.Sprintf(" (%d warnings)", len(m.warnings)))
+    }
+    // Display "(filtered_count/total_count)"
+    count := fmt.Sprintf("(%d/%d)", len(m.filtered), len(m.processes))
+    mode := ""
+    if m.portsOnly {
+        mode = faintStyle.Render(" [ports-only]")
+    }
+    // Join title, count, warnings, mode and the text input view.
+    return fmt.Sprintf("Search processes/ports %s%s%s: %s", faintStyle.Render(count), warnings, mode, m.textInput.View())
 }
 
 // renderFooter 负责渲染应用的底部区域，主要是根据当前状态显示不同的帮助信息。
 func (m model) renderFooter() string {
-	var help strings.Builder
-	if m.textInput.Focused() {
-		// 当搜索框激活时，显示退出搜索的提示。
-		help.WriteString(faintStyle.Render(" enter/esc to exit search"))
-	} else {
-		// 否则，显示主界面的快捷键帮助。
-		help.WriteString(faintStyle.Render(" /: search • i: info • ctrl+r: refresh • r: resume • p: pause • enter: kill • q: quit"))
-	}
-	return help.String()
+    var help strings.Builder
+    if m.textInput.Focused() {
+        // 当搜索框激活时，显示退出搜索的提示。
+        help.WriteString(faintStyle.Render(" enter/esc to exit search"))
+    } else {
+        // 否则，显示主界面的快捷键帮助。
+        help.WriteString(faintStyle.Render(" /: search • i: info • P: ports-only • ctrl+r: refresh • r: resume • p: pause • enter: kill • q: quit"))
+    }
+    return help.String()
 }
 
 // renderProcessPane 负责渲染左侧的进程列表面板。

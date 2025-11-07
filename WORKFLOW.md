@@ -113,6 +113,7 @@ graph TD
     *   如果是 `j`/`k`，则修改 `model.cursor` 的值来移动光标。
     *   如果是 `/`，则激活搜索框。
     *   如果是 `enter/p/r`，则返回一个 `sendSignalWithStatus` 命令向选中进程发送信号；仅当命令成功返回后，才会接收一条 `signalOKMsg` 来更新 UI 中该进程的 `Status`。
+    *   如果是 `P`（大写），切换“仅显示占用端口的进程”模式（ports-only），用于快速巡视当前端口占用情况。
 5.  每次 `Update` 函数返回后，`Bubble Tea` 都会自动调用 `View` 函数，使用更新后的 `model` 来重绘界面。
 
 这个循环不断重复，构成了整个应用的交互逻辑。
@@ -149,6 +150,12 @@ graph TD
   - 列表采集时是否扫描：`internal/process/process.go:126-156`；
   - 详情视图端口：`internal/process/process.go:264-268`；
   - 开关函数：`internal/process/process.go:324-333`。
+
+同时，端口扫描为 I/O 密集型操作，已做两项强化：
+
+- 提升并发（最多 CPU×2，且不超过进程数）：`internal/process/process.go`（worker 数计算）；
+- 为每个进程的连接采集设置短超时（默认 300ms，可通过 `GOKILL_PORT_TIMEOUT_MS` 覆盖）：
+  - 采集：`internal/process/process.go:getProcessPortsCtx`，`GetProcesses` 与 `GetProcessDetails` 中使用 `context.WithTimeout` 调用。
 
 ### C. 信号成功后再更新 UI 状态
 

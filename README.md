@@ -36,12 +36,17 @@ Run `gokill` in your terminal to start the interactive interface. You can immedi
 | `p` | Pause selected process (SIGSTOP) |
 | `r` | Resume selected process (SIGCONT) |
 | `i` | Show process details |
+| `P` | Toggle ports-only view |
 | `ctrl+r` | Refresh process list |
 | `q`/`ctrl+c` | Quit |
 
 ### Details Mode
 
 Press `i` on a selected process to open a details view showing PID, user, CPU/MEM, start time, and command. Press `q`, `esc`, or `i` again to return.
+
+### Ports-only View
+
+Press `P` (uppercase) to toggle a view that only shows processes listening on ports. In this view, the list is sorted by the smallest port number in ascending order.
 
 ### Port Scanning (optional)
 
@@ -52,6 +57,12 @@ export GOKILL_SCAN_PORTS=0
 ```
 
 When disabled, the list won’t highlight listeners and the details view won’t include the Ports line.
+
+You can also tune the port scan timeout (per process) via `GOKILL_PORT_TIMEOUT_MS` (default 300):
+
+```sh
+export GOKILL_PORT_TIMEOUT_MS=200
+```
 
 ## Related
 

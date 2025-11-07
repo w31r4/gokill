@@ -1,6 +1,7 @@
 package process
 
 import (
+    "context"
     "fmt"
     "os"
     "runtime"
@@ -86,9 +87,16 @@ func GetProcesses() ([]*Item, []error, error) {
 	}
 
 	// **并发设置**
-	// 根据当前机器的 CPU 核心数来决定启动多少个 Worker Goroutine。
-	// 这样做可以充分利用 CPU 资源，同时避免创建过多 Goroutine 导致调度开销过大。
-	numWorkers := runtime.NumCPU()
+    // 根据当前机器的 CPU 核心数来决定启动多少个 Worker Goroutine。
+    // I/O 密集型（连接采集）适当提高并发度，取 CPU*2 与进程数的较小值。
+    numCPU := runtime.NumCPU()
+    numWorkers := numCPU * 2
+    if numWorkers > len(procs) {
+        numWorkers = len(procs)
+    }
+    if numWorkers < 1 {
+        numWorkers = 1
+    }
 	// 创建一个带缓冲的 channel 用于存放待处理的进程任务。
 	// 缓冲大小设置为进程总数，这样主 Goroutine 可以一次性将所有任务放入 channel 而不会阻塞。
 	jobs := make(chan *process.Process, len(procs))
@@ -149,10 +157,13 @@ func GetProcesses() ([]*Item, []error, error) {
 					warnings <- fmt.Errorf("pid %d: failed to get create time: %w", p.Pid, err)
 				}
 
-                // 获取该进程监听的端口号（可选）。
+                // 获取该进程监听的端口号（可选，带超时）。
                 var ports []uint32
                 if scanPorts {
-                    ports = getProcessPorts(p)
+                    // 为单个进程的连接采集设定一个短超时，避免卡顿拖慢整体。
+                    ctx, cancel := context.WithTimeout(context.Background(), portScanTimeout())
+                    ports = getProcessPortsCtx(ctx, p)
+                    cancel()
                 }
 
 				// --- 任务完成，发送结果 ---
@@ -262,20 +273,30 @@ func GetProcessDetails(pid int) (string, error) {
 	fmt.Fprintf(&b, "  %%MEM:\t%.1f\n", memPercent)
 	fmt.Fprintf(&b, "  Start:\t%s\n", startTime)
     if shouldScanPorts() {
-        if ports := getProcessPorts(p); len(ports) > 0 {
+        ctx, cancel := context.WithTimeout(context.Background(), portScanTimeout())
+        if ports := getProcessPortsCtx(ctx, p); len(ports) > 0 {
             fmt.Fprintf(&b, "  Ports:\t%s\n", formatPorts(ports))
         }
+        cancel()
     }
 	fmt.Fprintf(&b, "  Command:\t%s\n", cmdline)
 
 	return b.String(), nil
 }
 
+// 兼容原有调用：默认使用配置的端口扫描超时。
 func getProcessPorts(p *process.Process) []uint32 {
-	conns, err := p.Connections()
-	if err != nil {
-		return nil
-	}
+    ctx, cancel := context.WithTimeout(context.Background(), portScanTimeout())
+    defer cancel()
+    return getProcessPortsCtx(ctx, p)
+}
+
+// getProcessPortsCtx 带 context 的端口采集，支持超时/取消。
+func getProcessPortsCtx(ctx context.Context, p *process.Process) []uint32 {
+    conns, err := p.ConnectionsWithContext(ctx)
+    if err != nil {
+        return nil
+    }
 
 	unique := make(map[uint32]struct{})
 	for _, conn := range conns {
@@ -330,4 +351,25 @@ func shouldScanPorts() bool {
     }
     s := strings.ToLower(v)
     return s == "1" || s == "true" || s == "yes"
+}
+
+// portScanTimeout 返回端口扫描的超时时间，默认 300ms。
+// 可通过环境变量 GOKILL_PORT_TIMEOUT_MS 覆盖（整数毫秒）。
+func portScanTimeout() time.Duration {
+    v := os.Getenv("GOKILL_PORT_TIMEOUT_MS")
+    if v == "" {
+        return 300 * time.Millisecond
+    }
+    // 简易解析，失败则回退默认。
+    var ms int
+    for i := 0; i < len(v); i++ {
+        if v[i] < '0' || v[i] > '9' {
+            return 300 * time.Millisecond
+        }
+    }
+    _, err := fmt.Sscanf(v, "%d", &ms)
+    if err != nil || ms <= 0 {
+        return 300 * time.Millisecond
+    }
+    return time.Duration(ms) * time.Millisecond
 }
