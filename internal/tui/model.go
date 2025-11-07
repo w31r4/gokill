@@ -196,11 +196,20 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "/":
 			m.textInput.Focus()
 			return m, nil
-		case "P":
-			// 切换“仅显示占用端口的进程”模式
-			m.portsOnly = !m.portsOnly
-			m.filtered = m.filterProcesses(m.textInput.Value())
-			return m, nil
+		case "esc":
+			// ESC 退出模式：此处用于退出 ports-only 视图
+			if m.portsOnly {
+				m.portsOnly = false
+				m.filtered = m.filterProcesses(m.textInput.Value())
+				return m, nil
+			}
+        case "P":
+            // 进入“仅显示占用端口的进程”模式；退出由 ESC 统一处理
+            if !m.portsOnly {
+                m.portsOnly = true
+                m.filtered = m.filterProcesses(m.textInput.Value())
+            }
+            return m, nil
 		case "up", "k":
 			if m.cursor > 0 {
 				m.cursor--

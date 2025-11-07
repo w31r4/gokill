@@ -46,7 +46,7 @@ Press `i` on a selected process to open a details view showing PID, user, CPU/ME
 
 ### Ports-only View
 
-Press `P` (uppercase) to toggle a view that only shows processes listening on ports. In this view, the list is sorted by the smallest port number in ascending order.
+Press `P` (uppercase) to show only processes that are listening on ports. In this view, the list is sorted by the smallest port number in ascending order.
 
 ### Port Scanning (optional)
 
