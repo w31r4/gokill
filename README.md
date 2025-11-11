@@ -58,7 +58,7 @@ export GOKILL_SCAN_PORTS=0
 
 When disabled, the list won’t highlight listeners and the details view won’t include the Ports line.
 
-You can also tune the port scan timeout (per process) via `GOKILL_PORT_TIMEOUT_MS` (default 300):
+You can tune the port scan timeout (per process) via `GOKILL_PORT_TIMEOUT_MS` (default 300):
 
 ```sh
 export GOKILL_PORT_TIMEOUT_MS=200
