@@ -1,12 +1,12 @@
 package tui
 
 import (
-    "fmt"
-    "os"
-    "sort"
-    "strconv"
-    "strings"
-    "syscall"
+	"fmt"
+	"os"
+	"sort"
+	"strconv"
+	"strings"
+	"syscall"
 
 	"github.com/w31r4/gokill/internal/process"
 
@@ -38,8 +38,8 @@ type errMsg struct{ err error }
 
 // signalOKMsg 表示进程信号发送成功的反馈消息，用于在 UI 中更新状态。
 type signalOKMsg struct {
-    pid    int
-    status process.Status
+	pid    int
+	status process.Status
 }
 
 // --- 应用状态模型 ---
@@ -60,10 +60,10 @@ type model struct {
 	warnings []error
 	// showDetails 是一个布尔标志，用于控制是显示进程列表还是显示单个进程的详细信息视图。
 	showDetails bool
-    // processDetails 存储从 `GetProcessDetails` 获取到的详细信息字符串。
-    processDetails string
-    // portsOnly 为 true 时，仅显示监听端口的进程。
-    portsOnly bool
+	// processDetails 存储从 `GetProcessDetails` 获取到的详细信息字符串。
+	processDetails string
+	// portsOnly 为 true 时，仅显示监听端口的进程。
+	portsOnly bool
 }
 
 // InitialModel 创建并返回应用的初始状态模型。
@@ -131,41 +131,41 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	// 1. 处理异步获取到的进程列表
 	// 1. Handle the arrival of the process list and any associated warnings.
-    case processesLoadedMsg:
-        m.processes = msg.processes                         // Update the full process list cache.
-        m.warnings = msg.warnings                           // Store any warnings.
-        m.filtered = m.filterProcesses(m.textInput.Value()) // Re-filter based on the current search term.
-        // Return a command to asynchronously save the new process list to the cache file.
-        return m, func() tea.Msg {
-            _ = process.Save(m.processes)
-            return nil // This command doesn't need to trigger any subsequent updates.
-        }
+	case processesLoadedMsg:
+		m.processes = msg.processes                         // Update the full process list cache.
+		m.warnings = msg.warnings                           // Store any warnings.
+		m.filtered = m.filterProcesses(m.textInput.Value()) // Re-filter based on the current search term.
+		// Return a command to asynchronously save the new process list to the cache file.
+		return m, func() tea.Msg {
+			_ = process.Save(m.processes)
+			return nil // This command doesn't need to trigger any subsequent updates.
+		}
 
 	// 2. 处理异步获取到的进程详情
 	case processDetailsMsg:
 		m.processDetails = string(msg) // 更新模型中的详情字符串
 		return m, nil                  // 不需要执行新的命令
 
-	// 3. 处理错误消息
-    case errMsg:
-        // 我们只显示错误信息，但有一种特殊情况需要忽略：
-        // 当我们尝试操作一个已经结束的进程时，会收到 "process already finished" 错误，
-        // 这在并发场景下是正常现象，直接忽略即可，避免不必要的信息干扰用户。
-        if !strings.Contains(msg.err.Error(), "process already finished") {
-            m.err = msg.err
-        }
-        return m, nil
+		// 3. 处理错误消息
+	case errMsg:
+		// 我们只显示错误信息，但有一种特殊情况需要忽略：
+		// 当我们尝试操作一个已经结束的进程时，会收到 "process already finished" 错误，
+		// 这在并发场景下是正常现象，直接忽略即可，避免不必要的信息干扰用户。
+		if !strings.Contains(msg.err.Error(), "process already finished") {
+			m.err = msg.err
+		}
+		return m, nil
 
-    // 处理信号成功消息：在成功后才更新 UI 状态，避免失败导致的 UI 错乱。
-    case signalOKMsg:
-        for _, it := range m.processes {
-            if int(it.Pid) == msg.pid {
-                it.Status = msg.status
-                break
-            }
-        }
-        // 由于 filtered 指向同一批指针，直接返回并让 View 重新渲染即可。
-        return m, nil
+	// 处理信号成功消息：在成功后才更新 UI 状态，避免失败导致的 UI 错乱。
+	case signalOKMsg:
+		for _, it := range m.processes {
+			if int(it.Pid) == msg.pid {
+				it.Status = msg.status
+				break
+			}
+		}
+		// 由于 filtered 指向同一批指针，直接返回并让 View 重新渲染即可。
+		return m, nil
 
 	// 4. 处理用户按键输入
 	case tea.KeyMsg:
@@ -203,13 +203,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.filtered = m.filterProcesses(m.textInput.Value())
 				return m, nil
 			}
-        case "P":
-            // 进入“仅显示占用端口的进程”模式；退出由 ESC 统一处理
-            if !m.portsOnly {
-                m.portsOnly = true
-                m.filtered = m.filterProcesses(m.textInput.Value())
-            }
-            return m, nil
+		case "P":
+			// 进入“仅显示占用端口的进程”模式；退出由 ESC 统一处理
+			if !m.portsOnly {
+				m.portsOnly = true
+				m.filtered = m.filterProcesses(m.textInput.Value())
+			}
+			return m, nil
 		case "up", "k":
 			if m.cursor > 0 {
 				m.cursor--
@@ -218,23 +218,23 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.cursor < len(m.filtered)-1 {
 				m.cursor++
 			}
-        case "enter":
-            if len(m.filtered) > 0 {
-                p := m.filtered[m.cursor]
-                return m, sendSignalWithStatus(int(p.Pid), syscall.SIGTERM, process.Killed)
-            }
-        case "p":
-            if len(m.filtered) > 0 {
-                p := m.filtered[m.cursor]
-                return m, sendSignalWithStatus(int(p.Pid), syscall.SIGSTOP, process.Paused)
-            }
-        case "r":
-            if len(m.filtered) > 0 {
-                p := m.filtered[m.cursor]
-                if p.Status == process.Paused {
-                    return m, sendSignalWithStatus(int(p.Pid), syscall.SIGCONT, process.Alive)
-                }
-            }
+		case "enter":
+			if len(m.filtered) > 0 {
+				p := m.filtered[m.cursor]
+				return m, sendSignalWithStatus(int(p.Pid), syscall.SIGTERM, process.Killed)
+			}
+		case "p":
+			if len(m.filtered) > 0 {
+				p := m.filtered[m.cursor]
+				return m, sendSignalWithStatus(int(p.Pid), syscall.SIGSTOP, process.Paused)
+			}
+		case "r":
+			if len(m.filtered) > 0 {
+				p := m.filtered[m.cursor]
+				if p.Status == process.Paused {
+					return m, sendSignalWithStatus(int(p.Pid), syscall.SIGCONT, process.Alive)
+				}
+			}
 		case "i":
 			if len(m.filtered) > 0 {
 				m.showDetails = true
@@ -274,13 +274,13 @@ type fuzzyProcessSource struct {
 
 // String 是 `fuzzy.Source` 接口要求的方法。
 // 它返回在给定索引 `i` 处的项目的字符串表示形式，模糊搜索将在这个字符串上进行匹配。
-// 为了让用户可以同时通过进程名、PID或端口号进行搜索，我们将这几项信息拼接成一个单一的字符串。
+// 为了让用户可以同时通过进程名、PID、用户名或端口号进行搜索，我们将这几项信息拼接成一个单一的字符串。
 func (s fuzzyProcessSource) String(i int) string {
 	p := s.processes[i]
 	if ports := portsForSearch(p.Ports); ports != "" {
-		return fmt.Sprintf("%s %d %s", p.Executable, p.Pid, ports)
+		return fmt.Sprintf("%s %s %d %s", p.Executable, p.User, p.Pid, ports)
 	}
-	return fmt.Sprintf("%s %d", p.Executable, p.Pid)
+	return fmt.Sprintf("%s %s %d", p.Executable, p.User, p.Pid)
 }
 
 // Len 是 `fuzzy.Source` 接口要求的另一个方法，返回数据源中的项目总数。
@@ -290,25 +290,25 @@ func (s fuzzyProcessSource) Len() int {
 
 // filterProcesses 根据给定的过滤字符串（filter）来筛选进程列表。
 func (m *model) filterProcesses(filter string) []*process.Item {
-    var filtered []*process.Item
-    // 如果过滤字符串为空，我们不过滤，而是返回所有未被杀死的进程。
-    if filter == "" {
-        for _, p := range m.processes {
-            if p.Status != process.Killed {
-                if m.portsOnly && len(p.Ports) == 0 {
-                    continue
-                }
-                filtered = append(filtered, p)
-            }
-        }
-        if m.portsOnly {
-            sort.SliceStable(filtered, func(i, j int) bool {
-                // 端口列表在采集时已升序，这里取第一个端口作为排序键
-                return filtered[i].Ports[0] < filtered[j].Ports[0]
-            })
-        }
-        return filtered
-    }
+	var filtered []*process.Item
+	// 如果过滤字符串为空，我们不过滤，而是返回所有未被杀死的进程。
+	if filter == "" {
+		for _, p := range m.processes {
+			if p.Status != process.Killed {
+				if m.portsOnly && len(p.Ports) == 0 {
+					continue
+				}
+				filtered = append(filtered, p)
+			}
+		}
+		if m.portsOnly {
+			sort.SliceStable(filtered, func(i, j int) bool {
+				// 端口列表在采集时已升序，这里取第一个端口作为排序键
+				return filtered[i].Ports[0] < filtered[j].Ports[0]
+			})
+		}
+		return filtered
+	}
 
 	// 如果有过滤条件，则使用模糊搜索。
 	// 1. 创建一个 `fuzzyProcessSource` 实例。
@@ -317,56 +317,56 @@ func (m *model) filterProcesses(filter string) []*process.Item {
 	matches := fuzzy.FindFrom(filter, source)
 
 	// 3. 根据匹配结果，从原始的 `m.processes` 列表中构建出过滤后的列表。
-    for _, match := range matches {
-        p := m.processes[match.Index]
-        // 同样，我们只包括未被杀死的进程。
-        if p.Status != process.Killed {
-            if m.portsOnly && len(p.Ports) == 0 {
-                continue
-            }
-            filtered = append(filtered, p)
-        }
-    }
+	for _, match := range matches {
+		p := m.processes[match.Index]
+		// 同样，我们只包括未被杀死的进程。
+		if p.Status != process.Killed {
+			if m.portsOnly && len(p.Ports) == 0 {
+				continue
+			}
+			filtered = append(filtered, p)
+		}
+	}
 
-    if m.portsOnly {
-        sort.SliceStable(filtered, func(i, j int) bool {
-            return filtered[i].Ports[0] < filtered[j].Ports[0]
-        })
-    }
+	if m.portsOnly {
+		sort.SliceStable(filtered, func(i, j int) bool {
+			return filtered[i].Ports[0] < filtered[j].Ports[0]
+		})
+	}
 
-    return filtered
+	return filtered
 }
 
 // sendSignal 是一个命令工厂函数，用于创建一个向指定PID进程发送信号的命令。
 func sendSignal(pid int, sig syscall.Signal) tea.Cmd {
-    return func() tea.Msg {
-        // 在 Goroutine 中执行实际的信号发送操作。
-        if err := process.SendSignal(pid, sig); err != nil {
-            // 如果失败，返回一个错误消息。
-            return errMsg{err}
-        }
-        // 成功则返回 nil，表示此命令不需要触发任何状态更新。
-        return nil
-    }
+	return func() tea.Msg {
+		// 在 Goroutine 中执行实际的信号发送操作。
+		if err := process.SendSignal(pid, sig); err != nil {
+			// 如果失败，返回一个错误消息。
+			return errMsg{err}
+		}
+		// 成功则返回 nil，表示此命令不需要触发任何状态更新。
+		return nil
+	}
 }
 
 // sendSignalWithStatus 仅在信号发送成功后回传一条消息，用于更新 UI 中的进程状态。
 func sendSignalWithStatus(pid int, sig syscall.Signal, status process.Status) tea.Cmd {
-    return func() tea.Msg {
-        if err := process.SendSignal(pid, sig); err != nil {
-            return errMsg{err}
-        }
-        return signalOKMsg{pid: pid, status: status}
-    }
+	return func() tea.Msg {
+		if err := process.SendSignal(pid, sig); err != nil {
+			return errMsg{err}
+		}
+		return signalOKMsg{pid: pid, status: status}
+	}
 }
 
 // --- UI 样式定义 ---
 // 使用 `charmbracelet/lipgloss` 库来定义TUI的样式。
 // 这种方式使得样式的管理和复用变得非常方便。
 var (
-    // docStyle 是整个应用的基础样式，设置了外边距。
-    // 收紧整体上下外边距让界面更紧凑。
-    docStyle = lipgloss.NewStyle().Margin(0, 1)
+	// docStyle 是整个应用的基础样式，设置了外边距。
+	// 收紧整体上下外边距让界面更紧凑。
+	docStyle = lipgloss.NewStyle().Margin(0, 1)
 	// selectedStyle 是当前光标选中行的样式，设置了背景色和前景色。
 	selectedStyle = lipgloss.NewStyle().Background(lipgloss.Color("62")).Foreground(lipgloss.Color("255"))
 	// faintStyle 用于渲染次要信息（如帮助文本），使其颜色变淡。
@@ -377,13 +377,13 @@ var (
 	pausedStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("220"))
 	// listeningStyle 是监听端口的进程的样式，同样使用黄色以保持一致性。
 	listeningStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("220"))
-    // paneStyle 是左右两个面板的基础样式，定义了圆角边框和内边距。
-    paneStyle = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(0, 1)
-    // processPaneStyle 是左侧进程列表面板的样式，继承自 paneStyle 并设置了宽度和边框颜色。
-    processPaneStyle = paneStyle.Copy().Width(60).BorderForeground(lipgloss.Color("62"))
-    // portPaneStyle 是右侧端口列表面板的样式，继承自 paneStyle 并设置了宽度和边框颜色。
-    // 取消固定高度与居中对齐，避免出现大量垂直空白；减小宽度使其更紧凑。
-    portPaneStyle = paneStyle.Copy().Width(16).BorderForeground(lipgloss.Color("220")).Align(lipgloss.Left)
+	// paneStyle 是左右两个面板的基础样式，定义了圆角边框和内边距。
+	paneStyle = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(0, 1)
+	// processPaneStyle 是左侧进程列表面板的样式，继承自 paneStyle 并设置了宽度和边框颜色。
+	processPaneStyle = paneStyle.Copy().Width(60).BorderForeground(lipgloss.Color("62"))
+	// portPaneStyle 是右侧端口列表面板的样式，继承自 paneStyle 并设置了宽度和边框颜色。
+	// 取消固定高度与居中对齐，避免出现大量垂直空白；减小宽度使其更紧凑。
+	portPaneStyle = paneStyle.Copy().Width(16).BorderForeground(lipgloss.Color("220")).Align(lipgloss.Left)
 )
 
 // 定义了进程列表视口（Viewport）的高度，即一次显示多少行。
@@ -448,31 +448,31 @@ func (m model) renderDetailsView() string {
 
 // renderHeader 负责渲染应用的头部区域，主要包括搜索框和进程计数。
 func (m model) renderHeader() string {
-    var warnings string
-    if len(m.warnings) > 0 {
-        warnings = faintStyle.Render(fmt.Sprintf(" (%d warnings)", len(m.warnings)))
-    }
-    // Display "(filtered_count/total_count)"
-    count := fmt.Sprintf("(%d/%d)", len(m.filtered), len(m.processes))
-    mode := ""
-    if m.portsOnly {
-        mode = faintStyle.Render(" [ports-only]")
-    }
-    // Join title, count, warnings, mode and the text input view.
-    return fmt.Sprintf("Search processes/ports %s%s%s: %s", faintStyle.Render(count), warnings, mode, m.textInput.View())
+	var warnings string
+	if len(m.warnings) > 0 {
+		warnings = faintStyle.Render(fmt.Sprintf(" (%d warnings)", len(m.warnings)))
+	}
+	// Display "(filtered_count/total_count)"
+	count := fmt.Sprintf("(%d/%d)", len(m.filtered), len(m.processes))
+	mode := ""
+	if m.portsOnly {
+		mode = faintStyle.Render(" [ports-only]")
+	}
+	// Join title, count, warnings, mode and the text input view.
+	return fmt.Sprintf("Search processes/ports %s%s%s: %s", faintStyle.Render(count), warnings, mode, m.textInput.View())
 }
 
 // renderFooter 负责渲染应用的底部区域，主要是根据当前状态显示不同的帮助信息。
 func (m model) renderFooter() string {
-    var help strings.Builder
-    if m.textInput.Focused() {
-        // 当搜索框激活时，显示退出搜索的提示。
-        help.WriteString(faintStyle.Render(" enter/esc to exit search"))
-    } else {
-        // 否则，显示主界面的快捷键帮助。
-        help.WriteString(faintStyle.Render(" /: search • i: info • P: ports-only • ctrl+r: refresh • r: resume • p: pause • enter: kill • q: quit"))
-    }
-    return help.String()
+	var help strings.Builder
+	if m.textInput.Focused() {
+		// 当搜索框激活时，显示退出搜索的提示。
+		help.WriteString(faintStyle.Render(" enter/esc to exit search"))
+	} else {
+		// 否则，显示主界面的快捷键帮助。
+		help.WriteString(faintStyle.Render(" /: search • i: info • P: ports-only • ctrl+r: refresh • r: resume • p: pause • enter: kill • q: quit"))
+	}
+	return help.String()
 }
 
 // renderProcessPane 负责渲染左侧的进程列表面板。
@@ -526,35 +526,35 @@ func (m model) renderProcessPane() string {
 		}
 	}
 
-    // 去掉末尾多余的换行，避免左侧列表底部出现空行。
-    return processPaneStyle.Render(strings.TrimRight(b.String(), "\n"))
+	// 去掉末尾多余的换行，避免左侧列表底部出现空行。
+	return processPaneStyle.Render(strings.TrimRight(b.String(), "\n"))
 }
 
 // renderPortPane 负责渲染右侧的端口信息面板。
 func (m model) renderPortPane() string {
-    var b strings.Builder
-    fmt.Fprintln(&b, "Listening Ports")
+	var b strings.Builder
+	fmt.Fprintln(&b, "Listening Ports")
 
 	// 如果没有进程或光标无效，则显示 n/a。
-    if len(m.filtered) == 0 || m.cursor >= len(m.filtered) {
-        fmt.Fprintln(&b, faintStyle.Render("(n/a)"))
-        return portPaneStyle.Render(strings.TrimRight(b.String(), "\n"))
-    }
+	if len(m.filtered) == 0 || m.cursor >= len(m.filtered) {
+		fmt.Fprintln(&b, faintStyle.Render("(n/a)"))
+		return portPaneStyle.Render(strings.TrimRight(b.String(), "\n"))
+	}
 
 	// 获取当前光标选中的进程。
 	p := m.filtered[m.cursor]
-    if len(p.Ports) == 0 {
-        // 如果该进程没有监听任何端口，则显示 (none)。
-        fmt.Fprintln(&b, faintStyle.Render("(none)"))
-    } else {
-        // 否则，逐行显示所有监听的端口号。
-        for _, port := range p.Ports {
-            fmt.Fprintln(&b, fmt.Sprintf("%d", port))
-        }
-    }
+	if len(p.Ports) == 0 {
+		// 如果该进程没有监听任何端口，则显示 (none)。
+		fmt.Fprintln(&b, faintStyle.Render("(none)"))
+	} else {
+		// 否则，逐行显示所有监听的端口号。
+		for _, port := range p.Ports {
+			fmt.Fprintln(&b, fmt.Sprintf("%d", port))
+		}
+	}
 
 	// 应用端口面板的样式。
-    return portPaneStyle.Render(strings.TrimRight(b.String(), "\n"))
+	return portPaneStyle.Render(strings.TrimRight(b.String(), "\n"))
 }
 
 // portsForSearch 是一个辅助函数，将端口号列表转换为一个用空格分隔的字符串，

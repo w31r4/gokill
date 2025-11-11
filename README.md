@@ -22,7 +22,7 @@ go build
 
 ## Usage
 
-Run `gokill` in your terminal to start the interactive interface. You can immediately start typing to fuzzy search for processes by name or PID.
+Run `gokill` in your terminal to start the interactive interface. You can immediately start typing to fuzzy search for processes by name, PID, username, or ports.
 
 ### Keybindings
 
