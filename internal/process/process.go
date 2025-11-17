@@ -1,17 +1,17 @@
 package process
 
 import (
-    "context"
-    "fmt"
-    "os"
-    "runtime"
-    "sort"
-    "strings"
-    "sync"
-    "syscall"
-    "time"
+	"context"
+	"fmt"
+	"os"
+	"runtime"
+	"sort"
+	"strings"
+	"sync"
+	"syscall"
+	"time"
 
-    "github.com/shirou/gopsutil/v3/process"
+	"github.com/shirou/gopsutil/v3/process"
 )
 
 // Status represents the state of a process item in the list.
@@ -29,6 +29,7 @@ const (
 // Item represents a process in our list.
 type Item struct {
 	Pid        int32    `json:"pid"`
+	PPid       int32    `json:"ppid"`
 	Executable string   `json:"executable"`
 	User       string   `json:"user"`
 	StartTime  string   `json:"startTime"`
@@ -53,6 +54,7 @@ func NewItem(pid int, executable, user string, ports ...int) *Item {
 
 	return &Item{
 		Pid:        int32(pid),
+		PPid:       0,
 		Executable: executable,
 		User:       user,
 		Status:     Alive,
@@ -65,16 +67,16 @@ func NewItem(pid int, executable, user string, ports ...int) *Item {
 // 为了高效地处理这些进程信息，这里采用了一个经典的并发模式：扇出/扇入（Fan-out/Fan-in）的 Worker Pool 模式。
 //
 // 并发模型详解：
-// 1. **扇出 (Fan-out)**: 主 Goroutine 获取所有进程列表，然后将每个进程作为一个“任务”发送到 `jobs` channel 中。
-// 2. **Worker Pool**: 程序会根据系统的 CPU 核心数创建一组（`numWorkers`）Goroutine。这些 Goroutine 被称为 "Worker"。
-//    它们每一个都同时从 `jobs` channel 中取出任务进行处理。处理过程包括获取进程的详细信息（如名称、用户、端口等），
-//    这是一个相对耗时的 I/O 操作，因此非常适合并发执行。
-// 3. **扇入 (Fan-in)**: 每个 Worker 完成任务后，会将处理结果（一个 `Item` 结构体）发送到 `results` channel 中。
-//    这样，所有 Worker 的处理结果都汇集到了同一个 channel。
-// 4. **同步 (Synchronization)**: 主 Goroutine 使用 `sync.WaitGroup` 来等待所有的 Worker 都完成它们的工作。
-//    这是确保在收集结果之前，所有任务都已经被处理完毕的关键。
-// 5. **收集 (Collection)**: 所有 Worker 都结束后，主 Goroutine 从 `results` channel 中读取所有的结果，
-//    并将它们汇总到一个切片（slice）中，最后进行排序并返回。
+//  1. **扇出 (Fan-out)**: 主 Goroutine 获取所有进程列表，然后将每个进程作为一个“任务”发送到 `jobs` channel 中。
+//  2. **Worker Pool**: 程序会根据系统的 CPU 核心数创建一组（`numWorkers`）Goroutine。这些 Goroutine 被称为 "Worker"。
+//     它们每一个都同时从 `jobs` channel 中取出任务进行处理。处理过程包括获取进程的详细信息（如名称、用户、端口等），
+//     这是一个相对耗时的 I/O 操作，因此非常适合并发执行。
+//  3. **扇入 (Fan-in)**: 每个 Worker 完成任务后，会将处理结果（一个 `Item` 结构体）发送到 `results` channel 中。
+//     这样，所有 Worker 的处理结果都汇集到了同一个 channel。
+//  4. **同步 (Synchronization)**: 主 Goroutine 使用 `sync.WaitGroup` 来等待所有的 Worker 都完成它们的工作。
+//     这是确保在收集结果之前，所有任务都已经被处理完毕的关键。
+//  5. **收集 (Collection)**: 所有 Worker 都结束后，主 Goroutine 从 `results` channel 中读取所有的结果，
+//     并将它们汇总到一个切片（slice）中，最后进行排序并返回。
 //
 // 这种模式的优势在于，它将一个大的、可分解的任务（获取所有进程信息）分解成许多小任务，并利用多核 CPU 并行处理，
 // 从而极大地缩短了总体的处理时间。
@@ -87,66 +89,66 @@ func GetProcesses() ([]*Item, []error, error) {
 	}
 
 	// **并发设置**
-    // 根据当前机器的 CPU 核心数来决定启动多少个 Worker Goroutine。
-    // I/O 密集型（连接采集）适当提高并发度，取 CPU*2 与进程数的较小值。
-    numCPU := runtime.NumCPU()
-    numWorkers := numCPU * 2
-    if numWorkers > len(procs) {
-        numWorkers = len(procs)
-    }
-    if numWorkers < 1 {
-        numWorkers = 1
-    }
+	// 根据当前机器的 CPU 核心数来决定启动多少个 Worker Goroutine。
+	// I/O 密集型（连接采集）适当提高并发度，取 CPU*2 与进程数的较小值。
+	numCPU := runtime.NumCPU()
+	numWorkers := numCPU * 2
+	if numWorkers > len(procs) {
+		numWorkers = len(procs)
+	}
+	if numWorkers < 1 {
+		numWorkers = 1
+	}
 	// 创建一个带缓冲的 channel 用于存放待处理的进程任务。
 	// 缓冲大小设置为进程总数，这样主 Goroutine 可以一次性将所有任务放入 channel 而不会阻塞。
 	jobs := make(chan *process.Process, len(procs))
-    // 创建另一个带缓冲的 channel 用于收集处理完成的结果。
-    results := make(chan *Item, len(procs))
-    // 创建一个用于收集非致命错误（警告）的 channel。
-    // 改为小容量并在后台聚合，避免当每个进程产生多条警告时阻塞 worker。
-    warnings := make(chan error, runtime.NumCPU())
+	// 创建另一个带缓冲的 channel 用于收集处理完成的结果。
+	results := make(chan *Item, len(procs))
+	// 创建一个用于收集非致命错误（警告）的 channel。
+	// 改为小容量并在后台聚合，避免当每个进程产生多条警告时阻塞 worker。
+	warnings := make(chan error, runtime.NumCPU())
 
-    // 后台聚合所有警告，防止 warnings 写满造成阻塞。
-    var warnWG sync.WaitGroup
-    warnWG.Add(1)
-    collectedWarnings := make([]error, 0, len(procs))
-    go func() {
-        defer warnWG.Done()
-        for w := range warnings {
-            collectedWarnings = append(collectedWarnings, w)
-        }
-    }()
+	// 后台聚合所有警告，防止 warnings 写满造成阻塞。
+	var warnWG sync.WaitGroup
+	warnWG.Add(1)
+	collectedWarnings := make([]error, 0, len(procs))
+	go func() {
+		defer warnWG.Done()
+		for w := range warnings {
+			collectedWarnings = append(collectedWarnings, w)
+		}
+	}()
 
 	// **Worker Pool 的启动**
 	// 使用 WaitGroup 来追踪所有 Worker Goroutine 的完成状态。
 	var wg sync.WaitGroup
 	// 这个循环创建并启动了 `numWorkers` 个 Worker Goroutine。
-    for w := 0; w < numWorkers; w++ {
-        // 每启动一个 Goroutine，WaitGroup 的计数器就加一。
-        wg.Add(1)
-        go func() {
+	for w := 0; w < numWorkers; w++ {
+		// 每启动一个 Goroutine，WaitGroup 的计数器就加一。
+		wg.Add(1)
+		go func() {
 			// 使用 defer 确保在 Goroutine 退出时，一定会调用 Done()，将 WaitGroup 计数器减一。
 			// 这是至关重要的，否则主 Goroutine 可能会永远等待下去。
 			defer wg.Done()
 
 			// 每个 Worker 不断地从 `jobs` channel 中接收任务。
 			// `for range` 会一直阻塞，直到 channel 被关闭并且所有值都被接收完毕。
-            // 是否扫描端口由环境变量控制，避免每次全量扫描带来的性能/权限问题。
-            scanPorts := shouldScanPorts()
+			// 是否扫描端口由环境变量控制，避免每次全量扫描带来的性能/权限问题。
+			scanPorts := shouldScanPorts()
 
-            for p := range jobs {
-                // --- 单个进程信息的处理 ---
-                name, err := p.Name()
-                if err != nil {
-                    // 如果获取进程名失败，则发送一个警告并跳过这个进程。
-                    warnings <- fmt.Errorf("pid %d: failed to get name: %w", p.Pid, err)
-                    continue
-                }
-                user, err := p.Username()
-                if err != nil {
-                    user = "n/a" // 失败则使用默认值
-                    warnings <- fmt.Errorf("pid %d: failed to get user: %w", p.Pid, err)
-                }
+			for p := range jobs {
+				// --- 单个进程信息的处理 ---
+				name, err := p.Name()
+				if err != nil {
+					// 如果获取进程名失败，则发送一个警告并跳过这个进程。
+					warnings <- fmt.Errorf("pid %d: failed to get name: %w", p.Pid, err)
+					continue
+				}
+				user, err := p.Username()
+				if err != nil {
+					user = "n/a" // 失败则使用默认值
+					warnings <- fmt.Errorf("pid %d: failed to get user: %w", p.Pid, err)
+				}
 
 				createTime, err := p.CreateTime()
 				startTime := "n/a"
@@ -157,19 +159,26 @@ func GetProcesses() ([]*Item, []error, error) {
 					warnings <- fmt.Errorf("pid %d: failed to get create time: %w", p.Pid, err)
 				}
 
-                // 获取该进程监听的端口号（可选，带超时）。
-                var ports []uint32
-                if scanPorts {
-                    // 为单个进程的连接采集设定一个短超时，避免卡顿拖慢整体。
-                    ctx, cancel := context.WithTimeout(context.Background(), portScanTimeout())
-                    ports = getProcessPortsCtx(ctx, p)
-                    cancel()
-                }
+				ppid, err := p.Ppid()
+				if err != nil {
+					ppid = 0
+					warnings <- fmt.Errorf("pid %d: failed to get ppid: %w", p.Pid, err)
+				}
+
+				// 获取该进程监听的端口号（可选，带超时）。
+				var ports []uint32
+				if scanPorts {
+					// 为单个进程的连接采集设定一个短超时，避免卡顿拖慢整体。
+					ctx, cancel := context.WithTimeout(context.Background(), portScanTimeout())
+					ports = getProcessPortsCtx(ctx, p)
+					cancel()
+				}
 
 				// --- 任务完成，发送结果 ---
 				// 将处理好的进程信息封装成 Item 结构体，并发送到 `results` channel。
 				results <- &Item{
 					Pid:        p.Pid,
+					PPid:       ppid,
 					Executable: name,
 					User:       user,
 					StartTime:  startTime,
@@ -196,8 +205,8 @@ func GetProcesses() ([]*Item, []error, error) {
 	wg.Wait()
 	// 此时，可以确定所有的处理结果都已经被发送到了 `results` 和 `warnings` channel。
 	// 关闭这些 channel，为下一步的接收做准备。
-    close(results)
-    close(warnings)
+	close(results)
+	close(warnings)
 
 	// 从 `results` channel 中读取所有处理好的 `Item`。
 	// `for range` 会遍历 channel 中所有的数据，直到 channel 被关闭且为空。
@@ -206,8 +215,8 @@ func GetProcesses() ([]*Item, []error, error) {
 		items = append(items, item)
 	}
 
-    // 等待后台聚合器读取完所有 warnings
-    warnWG.Wait()
+	// 等待后台聚合器读取完所有 warnings
+	warnWG.Wait()
 
 	// 最后，对结果进行排序，以便在界面上更友好地展示。
 	sort.Slice(items, func(i, j int) bool {
@@ -215,7 +224,7 @@ func GetProcesses() ([]*Item, []error, error) {
 	})
 
 	// 返回最终处理好的进程列表和所有警告。
-    return items, collectedWarnings, nil
+	return items, collectedWarnings, nil
 }
 
 // SendSignal sends a signal to a process by its PID.
@@ -239,16 +248,16 @@ func GetProcessDetails(pid int) (string, error) {
 		user = "n/a"
 	}
 
-    // 第一次采样常为 0；进行一次短间隔的二次采样以获得更可信的数值。
-    cpuPercent := 0.0
-    if v, err := p.CPUPercent(); err == nil && v > 0 {
-        cpuPercent = v
-    } else {
-        time.Sleep(200 * time.Millisecond)
-        if v2, err2 := p.CPUPercent(); err2 == nil {
-            cpuPercent = v2
-        }
-    }
+	// 第一次采样常为 0；进行一次短间隔的二次采样以获得更可信的数值。
+	cpuPercent := 0.0
+	if v, err := p.CPUPercent(); err == nil && v > 0 {
+		cpuPercent = v
+	} else {
+		time.Sleep(200 * time.Millisecond)
+		if v2, err2 := p.CPUPercent(); err2 == nil {
+			cpuPercent = v2
+		}
+	}
 
 	memPercent, err := p.MemoryPercent()
 	if err != nil {
@@ -272,13 +281,13 @@ func GetProcessDetails(pid int) (string, error) {
 	fmt.Fprintf(&b, "  %%CPU:\t%.1f\n", cpuPercent)
 	fmt.Fprintf(&b, "  %%MEM:\t%.1f\n", memPercent)
 	fmt.Fprintf(&b, "  Start:\t%s\n", startTime)
-    if shouldScanPorts() {
-        ctx, cancel := context.WithTimeout(context.Background(), portScanTimeout())
-        if ports := getProcessPortsCtx(ctx, p); len(ports) > 0 {
-            fmt.Fprintf(&b, "  Ports:\t%s\n", formatPorts(ports))
-        }
-        cancel()
-    }
+	if shouldScanPorts() {
+		ctx, cancel := context.WithTimeout(context.Background(), portScanTimeout())
+		if ports := getProcessPortsCtx(ctx, p); len(ports) > 0 {
+			fmt.Fprintf(&b, "  Ports:\t%s\n", formatPorts(ports))
+		}
+		cancel()
+	}
 	fmt.Fprintf(&b, "  Command:\t%s\n", cmdline)
 
 	return b.String(), nil
@@ -286,17 +295,17 @@ func GetProcessDetails(pid int) (string, error) {
 
 // 兼容原有调用：默认使用配置的端口扫描超时。
 func getProcessPorts(p *process.Process) []uint32 {
-    ctx, cancel := context.WithTimeout(context.Background(), portScanTimeout())
-    defer cancel()
-    return getProcessPortsCtx(ctx, p)
+	ctx, cancel := context.WithTimeout(context.Background(), portScanTimeout())
+	defer cancel()
+	return getProcessPortsCtx(ctx, p)
 }
 
 // getProcessPortsCtx 带 context 的端口采集，支持超时/取消。
 func getProcessPortsCtx(ctx context.Context, p *process.Process) []uint32 {
-    conns, err := p.ConnectionsWithContext(ctx)
-    if err != nil {
-        return nil
-    }
+	conns, err := p.ConnectionsWithContext(ctx)
+	if err != nil {
+		return nil
+	}
 
 	unique := make(map[uint32]struct{})
 	for _, conn := range conns {
@@ -345,31 +354,31 @@ func formatPorts(ports []uint32) string {
 // shouldScanPorts 通过环境变量控制是否扫描端口。
 // 当 GOKILL_SCAN_PORTS 为空、"1"、"true"、"yes" 时启用扫描；其他值则禁用。
 func shouldScanPorts() bool {
-    v := os.Getenv("GOKILL_SCAN_PORTS")
-    if v == "" {
-        return true
-    }
-    s := strings.ToLower(v)
-    return s == "1" || s == "true" || s == "yes"
+	v := os.Getenv("GOKILL_SCAN_PORTS")
+	if v == "" {
+		return true
+	}
+	s := strings.ToLower(v)
+	return s == "1" || s == "true" || s == "yes"
 }
 
 // portScanTimeout 返回端口扫描的超时时间，默认 300ms。
 // 可通过环境变量 GOKILL_PORT_TIMEOUT_MS 覆盖（整数毫秒）。
 func portScanTimeout() time.Duration {
-    v := os.Getenv("GOKILL_PORT_TIMEOUT_MS")
-    if v == "" {
-        return 300 * time.Millisecond
-    }
-    // 简易解析，失败则回退默认。
-    var ms int
-    for i := 0; i < len(v); i++ {
-        if v[i] < '0' || v[i] > '9' {
-            return 300 * time.Millisecond
-        }
-    }
-    _, err := fmt.Sscanf(v, "%d", &ms)
-    if err != nil || ms <= 0 {
-        return 300 * time.Millisecond
-    }
-    return time.Duration(ms) * time.Millisecond
+	v := os.Getenv("GOKILL_PORT_TIMEOUT_MS")
+	if v == "" {
+		return 300 * time.Millisecond
+	}
+	// 简易解析，失败则回退默认。
+	var ms int
+	for i := 0; i < len(v); i++ {
+		if v[i] < '0' || v[i] > '9' {
+			return 300 * time.Millisecond
+		}
+	}
+	_, err := fmt.Sscanf(v, "%d", &ms)
+	if err != nil || ms <= 0 {
+		return 300 * time.Millisecond
+	}
+	return time.Duration(ms) * time.Millisecond
 }

@@ -417,7 +417,9 @@ var (
 
 // 定义了进程列表视口（Viewport）的高度，即一次显示多少行。
 const (
-	viewHeight = 7
+	viewHeight               = 7
+	dependencyTreeDepth      = 3
+	dependencyTreeChildLimit = 5
 )
 
 // View 函数根据当前的应用状态（model）生成一个字符串，用于在终端上显示。
@@ -557,27 +559,35 @@ func (m model) renderProcessPane() string {
 // renderPortPane 负责渲染右侧的端口信息面板。
 func (m model) renderPortPane() string {
 	var b strings.Builder
-	fmt.Fprintln(&b, "Listening Ports")
+	fmt.Fprintln(&b, "Ports")
 
-	// 如果没有进程或光标无效，则显示 n/a。
+	// 如果没有进程或光标无效，则显示空状态并跳过依赖树。
 	if len(m.filtered) == 0 || m.cursor >= len(m.filtered) {
+		fmt.Fprintln(&b, faintStyle.Render("(n/a)"))
+		fmt.Fprintln(&b, "")
+		fmt.Fprintln(&b, "Dependencies")
 		fmt.Fprintln(&b, faintStyle.Render("(n/a)"))
 		return portPaneStyle.Render(strings.TrimRight(b.String(), "\n"))
 	}
 
-	// 获取当前光标选中的进程。
 	p := m.filtered[m.cursor]
 	if len(p.Ports) == 0 {
-		// 如果该进程没有监听任何端口，则显示 (none)。
 		fmt.Fprintln(&b, faintStyle.Render("(none)"))
 	} else {
-		// 否则，逐行显示所有监听的端口号。
 		for _, port := range p.Ports {
 			fmt.Fprintln(&b, fmt.Sprintf("%d", port))
 		}
 	}
 
-	// 应用端口面板的样式。
+	fmt.Fprintln(&b, "")
+	fmt.Fprintln(&b, "Dependencies")
+	deps := m.renderDependencyTree(p)
+	if strings.TrimSpace(deps) == "" {
+		fmt.Fprintln(&b, faintStyle.Render("(n/a)"))
+	} else {
+		fmt.Fprintln(&b, deps)
+	}
+
 	return portPaneStyle.Render(strings.TrimRight(b.String(), "\n"))
 }
 
@@ -679,4 +689,69 @@ func friendlyErrorMessage(err error) string {
 	default:
 		return raw
 	}
+}
+
+// renderDependencyTree 根据当前选中的进程构建一个类似 tree 的依赖结构。
+func (m model) renderDependencyTree(root *process.Item) string {
+	if root == nil || len(m.processes) == 0 {
+		return ""
+	}
+
+	children := make(map[int32][]*process.Item)
+	for _, it := range m.processes {
+		children[it.PPid] = append(children[it.PPid], it)
+	}
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s (%d)\n", root.Executable, root.Pid)
+	renderDependencyChildren(&b, children, root.Pid, "", 0)
+
+	return strings.TrimRight(b.String(), "\n")
+}
+
+func renderDependencyChildren(b *strings.Builder, children map[int32][]*process.Item, pid int32, prefix string, depth int) {
+	if depth >= dependencyTreeDepth-1 {
+		return
+	}
+
+	kids := children[pid]
+	if len(kids) == 0 {
+		return
+	}
+
+	sort.Slice(kids, func(i, j int) bool {
+		if kids[i].Executable == kids[j].Executable {
+			return kids[i].Pid < kids[j].Pid
+		}
+		return kids[i].Executable < kids[j].Executable
+	})
+
+	truncated := 0
+	if len(kids) > dependencyTreeChildLimit {
+		truncated = len(kids) - dependencyTreeChildLimit
+		kids = kids[:dependencyTreeChildLimit]
+	}
+
+	for i, child := range kids {
+		last := i == len(kids)-1 && truncated == 0
+		fmt.Fprintf(b, "%s%s %s (%d)\n", prefix, branchSymbol(last), child.Executable, child.Pid)
+		nextPrefix := prefix
+		if last {
+			nextPrefix += "   "
+		} else {
+			nextPrefix += "│  "
+		}
+		renderDependencyChildren(b, children, child.Pid, nextPrefix, depth+1)
+	}
+
+	if truncated > 0 {
+		fmt.Fprintf(b, "%s└─ ... (%d more)\n", prefix, truncated)
+	}
+}
+
+func branchSymbol(last bool) string {
+	if last {
+		return "└─"
+	}
+	return "├─"
 }
