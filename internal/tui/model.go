@@ -74,6 +74,10 @@ type model struct {
 
 	// --- Confirm overlay ---
 	confirm *confirmPrompt
+
+	// Phase 4: filter and toggles for T-mode
+	depAliveOnly bool
+	depPortsOnly bool
 }
 
 // InitialModel 创建并返回应用的初始状态模型。
@@ -197,6 +201,23 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// Dependency mode (T) takes precedence over other interactive states except errors and confirm.
 		if m.depMode {
+			// When in T-mode and search is focused, update input first.
+			if m.textInput.Focused() {
+				switch msg.String() {
+				case "enter", "esc":
+					m.textInput.Blur()
+				}
+				m.textInput, cmd = m.textInput.Update(msg)
+				// keep cursor clamped to filtered lines
+				if c := len(applyDepFilters(m, buildDepLines(m))); m.depCursor >= c {
+					if c > 0 {
+						m.depCursor = c - 1
+					} else {
+						m.depCursor = 0
+					}
+				}
+				return m, cmd
+			}
 			switch msg.String() {
 			case "esc":
 				m.depMode = false
@@ -207,6 +228,29 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, tea.Quit
 			case "ctrl+r":
 				return m, getProcesses
+			case "/":
+				m.textInput.Focus()
+				return m, nil
+			case "S":
+				m.depAliveOnly = !m.depAliveOnly
+				if c := len(applyDepFilters(m, buildDepLines(m))); m.depCursor >= c {
+					if c > 0 {
+						m.depCursor = c - 1
+					} else {
+						m.depCursor = 0
+					}
+				}
+				return m, nil
+			case "L":
+				m.depPortsOnly = !m.depPortsOnly
+				if c := len(applyDepFilters(m, buildDepLines(m))); m.depCursor >= c {
+					if c > 0 {
+						m.depCursor = c - 1
+					} else {
+						m.depCursor = 0
+					}
+				}
+				return m, nil
 			case "up", "k":
 				if m.depCursor > 0 {
 					m.depCursor--
@@ -791,7 +835,7 @@ func (m model) renderDependencyView() string {
 		anc = m.buildAncestorLines(root)
 	}
 
-	lines := buildDepLines(m)
+	lines := applyDepFilters(m, buildDepLines(m))
 
 	// 视口计算，围绕光标
 	start := m.depCursor - dependencyViewHeight/2
@@ -820,14 +864,36 @@ func (m model) renderDependencyView() string {
 
 	for i := start; i < end; i++ {
 		ln := lines[i]
+		lineText := ln.text
+		// apply status color for non-selected rows
+		if it := m.findProcess(ln.pid); it != nil {
+			switch it.Status {
+			case process.Killed:
+				lineText = killingStyle.Render(lineText)
+			case process.Paused:
+				lineText = pausedStyle.Render(lineText)
+			}
+		}
 		if i == m.depCursor {
 			fmt.Fprintln(&b, selectedStyle.Render("❯ "+ln.text))
 		} else {
-			fmt.Fprintln(&b, "  "+faintStyle.Render(ln.text))
+			fmt.Fprintln(&b, "  "+lineText)
 		}
 	}
 
-	help := faintStyle.Render(" up/down: move • left/right/space: fold/unfold • enter/o: set root • u: up • a: ancestors • x: kill • p: pause • r: resume • esc: back • ctrl+r: refresh • i: details")
+	// Filter status line
+	filterBadge := ""
+	if m.textInput.Value() != "" {
+		filterBadge = fmt.Sprintf(" [filter: %q]", m.textInput.Value())
+	}
+	if m.depAliveOnly {
+		filterBadge += " [alive-only]"
+	}
+	if m.depPortsOnly {
+		filterBadge += " [listening-only]"
+	}
+
+	help := faintStyle.Render(" /: filter • S: alive-only • L: listening-only • left/right/space: fold/unfold • enter/o: set root • u: up • a: ancestors • x: kill • p: pause • r: resume • esc: back • ctrl+r: refresh • i: details" + filterBadge)
 	fmt.Fprintln(&b, "")
 	fmt.Fprintln(&b, help)
 	return docStyle.Render(strings.TrimRight(b.String(), "\n"))
@@ -914,6 +980,52 @@ func buildDepLines(m model) []depLine {
 	}
 	walk(root.Pid, "", 0)
 	return lines
+}
+
+// applyDepFilters 根据 T 模式的筛选条件过滤行：文本过滤、仅存活、仅监听端口。
+func applyDepFilters(m model, lines []depLine) []depLine {
+	if len(lines) == 0 {
+		return lines
+	}
+
+	term := strings.TrimSpace(m.textInput.Value())
+	hasTerm := term != ""
+	var out []depLine
+	for _, ln := range lines {
+		// never drop paging/ellipsis lines completely, but they are not actionable
+		if ln.pid == 0 {
+			if hasTerm {
+				// skip ellipsis on filter to reduce noise
+				continue
+			}
+			out = append(out, ln)
+			continue
+		}
+		it := m.findProcess(ln.pid)
+		if it == nil {
+			continue
+		}
+		if m.depAliveOnly && it.Status != process.Alive {
+			continue
+		}
+		if m.depPortsOnly && len(it.Ports) == 0 {
+			continue
+		}
+		if hasTerm {
+			// case-insensitive substring on text and pid match
+			if !strings.Contains(strings.ToLower(ln.text), strings.ToLower(term)) {
+				if termPid, err := strconv.Atoi(term); err == nil {
+					if int32(termPid) != it.Pid {
+						continue
+					}
+				} else {
+					continue
+				}
+			}
+		}
+		out = append(out, ln)
+	}
+	return out
 }
 
 func (m model) buildChildrenMap() map[int32][]*process.Item {
