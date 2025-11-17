@@ -64,6 +64,12 @@ type model struct {
 	processDetails string
 	// portsOnly 为 true 时，仅显示监听端口的进程。
 	portsOnly bool
+
+	// --- Dependency (T) mode state ---
+	depMode     bool
+	depRootPID  int32
+	depExpanded map[int32]depNodeState
+	depCursor   int
 }
 
 // InitialModel 创建并返回应用的初始状态模型。
@@ -169,6 +175,133 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	// 4. 处理用户按键输入
 	case tea.KeyMsg:
+		// Dependency mode (T) takes precedence over other interactive states except errors.
+		if m.depMode {
+			switch msg.String() {
+			case "esc":
+				m.depMode = false
+				m.depExpanded = nil
+				m.depCursor = 0
+				return m, nil
+			case "ctrl+c", "q":
+				return m, tea.Quit
+			case "ctrl+r":
+				return m, getProcesses
+			case "up", "k":
+				if m.depCursor > 0 {
+					m.depCursor--
+				}
+				return m, nil
+			case "down", "j":
+				if m.depCursor < len(buildDepLines(m))-1 {
+					m.depCursor++
+				}
+				return m, nil
+			case "left", "h":
+				lines := buildDepLines(m)
+				if len(lines) == 0 {
+					return m, nil
+				}
+				ln := lines[m.depCursor]
+				if ln.isMore {
+					// collapse parent
+					st := m.depExpanded[ln.parent]
+					st.expanded = false
+					st.page = 1
+					m.depExpanded[ln.parent] = st
+				} else if ln.pid != 0 {
+					st := m.depExpanded[ln.pid]
+					st.expanded = false
+					if st.page == 0 {
+						st.page = 1
+					}
+					m.depExpanded[ln.pid] = st
+				}
+				if m.depCursor >= len(buildDepLines(m)) {
+					if c := len(buildDepLines(m)); c > 0 {
+						m.depCursor = c - 1
+					} else {
+						m.depCursor = 0
+					}
+				}
+				return m, nil
+			case "right", "l":
+				lines := buildDepLines(m)
+				if len(lines) == 0 {
+					return m, nil
+				}
+				ln := lines[m.depCursor]
+				if ln.isMore {
+					st := m.depExpanded[ln.parent]
+					if st.page == 0 {
+						st.page = 1
+					}
+					st.page++
+					st.expanded = true
+					m.depExpanded[ln.parent] = st
+				} else if ln.pid != 0 {
+					st := m.depExpanded[ln.pid]
+					if st.page == 0 {
+						st.page = 1
+					}
+					st.expanded = true
+					m.depExpanded[ln.pid] = st
+				}
+				if m.depCursor >= len(buildDepLines(m)) {
+					if c := len(buildDepLines(m)); c > 0 {
+						m.depCursor = c - 1
+					} else {
+						m.depCursor = 0
+					}
+				}
+				return m, nil
+			case " ":
+				lines := buildDepLines(m)
+				if len(lines) == 0 {
+					return m, nil
+				}
+				ln := lines[m.depCursor]
+				if ln.isMore {
+					st := m.depExpanded[ln.parent]
+					if st.page == 0 {
+						st.page = 1
+					}
+					st.page++
+					st.expanded = true
+					m.depExpanded[ln.parent] = st
+				} else if ln.pid != 0 {
+					st := m.depExpanded[ln.pid]
+					if st.page == 0 {
+						st.page = 1
+					}
+					st.expanded = !st.expanded
+					if st.page == 0 {
+						st.page = 1
+					}
+					m.depExpanded[ln.pid] = st
+				}
+				if m.depCursor >= len(buildDepLines(m)) {
+					if c := len(buildDepLines(m)); c > 0 {
+						m.depCursor = c - 1
+					} else {
+						m.depCursor = 0
+					}
+				}
+				return m, nil
+			case "i":
+				lines := buildDepLines(m)
+				if len(lines) == 0 {
+					return m, nil
+				}
+				ln := lines[m.depCursor]
+				if ln.pid != 0 {
+					m.showDetails = true
+					m.processDetails = ""
+					return m, getProcessDetails(int(ln.pid))
+				}
+				return m, nil
+			}
+		}
 		if m.err != nil {
 			switch msg.String() {
 			case "esc":
@@ -218,6 +351,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if !m.portsOnly {
 				m.portsOnly = true
 				m.filtered = m.filterProcesses(m.textInput.Value())
+			}
+			return m, nil
+		case "T":
+			if len(m.filtered) > 0 {
+				p := m.filtered[m.cursor]
+				m.depMode = true
+				m.depRootPID = p.Pid
+				if m.depExpanded == nil {
+					m.depExpanded = make(map[int32]depNodeState)
+				}
+				m.depExpanded[p.Pid] = depNodeState{expanded: true, page: 1}
+				m.depCursor = 0
 			}
 			return m, nil
 		case "up", "k":
@@ -281,6 +426,19 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // fuzzyProcessSource 包装了进程列表。
 type fuzzyProcessSource struct {
 	processes []*process.Item
+}
+
+// --- Dependency tree structures ---
+type depNodeState struct {
+	expanded bool
+	page     int
+}
+
+type depLine struct {
+	pid    int32
+	parent int32
+	isMore bool
+	text   string
 }
 
 // String 是 `fuzzy.Source` 接口要求的方法。
@@ -420,6 +578,7 @@ const (
 	viewHeight               = 7
 	dependencyTreeDepth      = 3
 	dependencyTreeChildLimit = 5
+	dependencyViewHeight     = 18
 )
 
 // View 函数根据当前的应用状态（model）生成一个字符串，用于在终端上显示。
@@ -429,6 +588,16 @@ func (m model) View() string {
 	// 如果模型中存在错误，则显示错误视图。
 	if m.err != nil {
 		return m.renderErrorView()
+	}
+
+	// 详情视图优先级高于其它模式（包括依赖模式）。
+	if m.showDetails {
+		return m.renderDetailsView()
+	}
+
+	// Dependency full-screen mode.
+	if m.depMode {
+		return m.renderDependencyView()
 	}
 
 	if len(m.processes) == 0 {
@@ -501,6 +670,150 @@ func (m model) renderFooter() string {
 	return help.String()
 }
 
+// renderDependencyView 渲染全屏依赖树模式。
+func (m model) renderDependencyView() string {
+	root := m.findProcess(m.depRootPID)
+	if root == nil {
+		title := detailTitleStyle.Render("Dependency Tree")
+		hint := faintStyle.Render("(root process not found; esc to return)")
+		return docStyle.Render(lipgloss.JoinVertical(lipgloss.Left, title, hint))
+	}
+
+	lines := buildDepLines(m)
+
+	// 视口计算，围绕光标
+	start := m.depCursor - dependencyViewHeight/2
+	if start < 0 {
+		start = 0
+	}
+	end := start + dependencyViewHeight
+	if end > len(lines) {
+		end = len(lines)
+		start = end - dependencyViewHeight
+		if start < 0 {
+			start = 0
+		}
+	}
+
+	var b strings.Builder
+	title := detailTitleStyle.Render(fmt.Sprintf("Dependency Tree: %s (%d)", root.Executable, root.Pid))
+	fmt.Fprintln(&b, title)
+
+	for i := start; i < end; i++ {
+		ln := lines[i]
+		if i == m.depCursor {
+			fmt.Fprintln(&b, selectedStyle.Render("❯ "+ln.text))
+		} else {
+			fmt.Fprintln(&b, "  "+faintStyle.Render(ln.text))
+		}
+	}
+
+	help := faintStyle.Render(" up/down: move • left/right/space: fold/unfold • esc: back • ctrl+r: refresh • i: details")
+	fmt.Fprintln(&b, "")
+	fmt.Fprintln(&b, help)
+	return docStyle.Render(strings.TrimRight(b.String(), "\n"))
+}
+
+// buildDepLines 将当前依赖树按展开/分页状态扁平化为行。
+func buildDepLines(m model) []depLine {
+	root := m.findProcess(m.depRootPID)
+	if root == nil {
+		return nil
+	}
+	childrenMap := m.buildChildrenMap()
+
+	var lines []depLine
+	// 根行
+	lines = append(lines, depLine{pid: root.Pid, parent: 0, isMore: false, text: fmt.Sprintf("%s (%d)", root.Executable, root.Pid)})
+
+	// 递归子节点
+	var walk func(pid int32, prefix string, depth int)
+	walk = func(pid int32, prefix string, depth int) {
+		kids := childrenMap[pid]
+		if len(kids) == 0 {
+			return
+		}
+
+		// 排序稳定
+		sort.Slice(kids, func(i, j int) bool {
+			if kids[i].Executable == kids[j].Executable {
+				return kids[i].Pid < kids[j].Pid
+			}
+			return kids[i].Executable < kids[j].Executable
+		})
+
+		// 展开状态与分页
+		st := m.depExpanded[pid]
+		if !st.expanded && pid != m.depRootPID {
+			return
+		}
+		page := st.page
+		if page <= 0 {
+			page = 1
+		}
+		limit := dependencyTreeChildLimit * page
+		show := len(kids)
+		if show > limit {
+			show = limit
+		}
+
+		for i := 0; i < show; i++ {
+			child := kids[i]
+			last := (i == show-1) && (show == len(kids))
+			connector := branchSymbol(last)
+			line := fmt.Sprintf("%s%s %s (%d)", prefix, connector, child.Executable, child.Pid)
+			lines = append(lines, depLine{pid: child.Pid, parent: pid, text: line})
+
+			nextPrefix := prefix
+			if last {
+				nextPrefix += "   "
+			} else {
+				nextPrefix += "│  "
+			}
+
+			if depth < dependencyTreeDepth-1 {
+				walk(child.Pid, nextPrefix, depth+1)
+			} else if len(childrenMap[child.Pid]) > 0 {
+				// 深度到达上限，提示还有更深层
+				moreLine := fmt.Sprintf("%s└─ ... (deeper)", nextPrefix)
+				lines = append(lines, depLine{pid: 0, parent: child.Pid, isMore: false, text: moreLine})
+			}
+		}
+
+		if show < len(kids) {
+			// 还有更多同级子项，提供分页提示行
+			more := len(kids) - show
+			connector := branchSymbol(true)
+			moreLine := fmt.Sprintf("%s%s ... (%d more)", prefix, connector, more)
+			lines = append(lines, depLine{pid: 0, parent: pid, isMore: true, text: moreLine})
+		}
+	}
+
+	// 根默认展开
+	if st, ok := m.depExpanded[root.Pid]; !ok || !st.expanded {
+		m.depExpanded[root.Pid] = depNodeState{expanded: true, page: 1}
+	}
+	walk(root.Pid, "", 0)
+	return lines
+}
+
+func (m model) buildChildrenMap() map[int32][]*process.Item {
+	mp := make(map[int32][]*process.Item)
+	for _, it := range m.processes {
+		mp[it.PPid] = append(mp[it.PPid], it)
+	}
+	return mp
+}
+
+func (m model) findProcess(pid int32) *process.Item {
+	for _, it := range m.processes {
+		if it.Pid == pid {
+			return it
+		}
+	}
+	return nil
+}
+
 // renderProcessPane 负责渲染左侧的进程列表面板。
 func (m model) renderProcessPane() string {
 	var b strings.Builder
@@ -561,12 +874,11 @@ func (m model) renderPortPane() string {
 	var b strings.Builder
 	fmt.Fprintln(&b, "Ports")
 
-	// 如果没有进程或光标无效，则显示空状态并跳过依赖树。
+	// 如果没有进程或光标无效，则显示空状态，并提示 T 模式查看依赖树。
 	if len(m.filtered) == 0 || m.cursor >= len(m.filtered) {
 		fmt.Fprintln(&b, faintStyle.Render("(n/a)"))
 		fmt.Fprintln(&b, "")
-		fmt.Fprintln(&b, "Dependencies")
-		fmt.Fprintln(&b, faintStyle.Render("(n/a)"))
+		fmt.Fprintln(&b, faintStyle.Render("Press T to view dependency tree"))
 		return portPaneStyle.Render(strings.TrimRight(b.String(), "\n"))
 	}
 
@@ -580,13 +892,7 @@ func (m model) renderPortPane() string {
 	}
 
 	fmt.Fprintln(&b, "")
-	fmt.Fprintln(&b, "Dependencies")
-	deps := m.renderDependencyTree(p)
-	if strings.TrimSpace(deps) == "" {
-		fmt.Fprintln(&b, faintStyle.Render("(n/a)"))
-	} else {
-		fmt.Fprintln(&b, deps)
-	}
+	fmt.Fprintln(&b, faintStyle.Render("Press T to view dependency tree"))
 
 	return portPaneStyle.Render(strings.TrimRight(b.String(), "\n"))
 }
