@@ -169,9 +169,19 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	// 4. 处理用户按键输入
 	case tea.KeyMsg:
+		if m.err != nil {
+			switch msg.String() {
+			case "esc":
+				m.err = nil
+			case "ctrl+c", "q":
+				return m, tea.Quit
+			}
+			return m, nil
+		}
+
 		if m.showDetails {
 			switch msg.String() {
-			case "q", "esc", "i":
+			case "esc":
 				m.showDetails = false
 				m.processDetails = "" // Clear details
 			}
@@ -384,6 +394,24 @@ var (
 	// portPaneStyle 是右侧端口列表面板的样式，继承自 paneStyle 并设置了宽度和边框颜色。
 	// 取消固定高度与居中对齐，避免出现大量垂直空白；减小宽度使其更紧凑。
 	portPaneStyle = paneStyle.Copy().Width(16).BorderForeground(lipgloss.Color("220")).Align(lipgloss.Left)
+	// detailTitleStyle 渲染详情模式标题。
+	detailTitleStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("63")).Bold(true)
+	// detailPaneStyle 为详情内容提供柔和的边框和内边距。
+	detailPaneStyle = paneStyle.Copy().Width(80).BorderForeground(lipgloss.Color("63")).Padding(1, 2)
+	// detailLabelStyle 对详情键名做对齐和强调。
+	detailLabelStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("63")).Bold(true).Width(10).Align(lipgloss.Right)
+	// detailValueStyle 用于详情值。
+	detailValueStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("15")).MaxWidth(60)
+	// detailHelpStyle 丰富详情模式提示。
+	detailHelpStyle = faintStyle.Copy().MarginTop(1)
+	// errorTitleStyle 渲染错误标题。
+	errorTitleStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Bold(true)
+	// errorPaneStyle 统一错误面板。
+	errorPaneStyle = paneStyle.Copy().BorderForeground(lipgloss.Color("9")).Width(70).Padding(1, 2)
+	// errorHelpStyle 提示错误视图退出方式。
+	errorHelpStyle = faintStyle.Copy().MarginTop(1)
+	// errorMessageStyle 用于高亮错误信息本体。
+	errorMessageStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))
 )
 
 // 定义了进程列表视口（Viewport）的高度，即一次显示多少行。
@@ -395,9 +423,9 @@ const (
 // Bubble Tea 的运行时会不断调用这个函数来重绘界面。
 // 这个函数应该是“纯”的，即不应有任何副作用，只负责根据 `m` 的数据渲染视图。
 func (m model) View() string {
-	// 如果模型中存在错误，则只显示错误信息。
+	// 如果模型中存在错误，则显示错误视图。
 	if m.err != nil {
-		return fmt.Sprintf("\nError: %v\n\n", m.err)
+		return m.renderErrorView()
 	}
 
 	if len(m.processes) == 0 {
@@ -429,21 +457,16 @@ func (m model) View() string {
 
 // renderDetailsView 负责渲染单个进程的详细信息视图。
 func (m model) renderDetailsView() string {
-	var b strings.Builder
-	fmt.Fprintln(&b, "Process Details")
+	title := detailTitleStyle.Render("Process Details")
+	var pane string
 	if m.processDetails == "" {
-		// 如果详情还在加载中，显示 "Loading..."
-		fmt.Fprintln(&b, "\n  Loading...")
+		pane = detailPaneStyle.Render(faintStyle.Render("Collecting details..."))
 	} else {
-		// 加载完成后，显示获取到的详情字符串。
-		fmt.Fprintln(&b, "")
-		fmt.Fprint(&b, m.processDetails)
+		pane = detailPaneStyle.Render(formatProcessDetails(m.processDetails))
 	}
-	// 在底部添加帮助信息。
-	help := faintStyle.Render("\n\n q/esc/i: back to list")
-	fmt.Fprint(&b, help)
-	// 应用整体的文档样式。
-	return docStyle.Render(b.String())
+	help := detailHelpStyle.Render(" esc: back to list")
+	content := lipgloss.JoinVertical(lipgloss.Left, title, pane, help)
+	return docStyle.Render(content)
 }
 
 // renderHeader 负责渲染应用的头部区域，主要包括搜索框和进程计数。
@@ -557,6 +580,18 @@ func (m model) renderPortPane() string {
 	return portPaneStyle.Render(strings.TrimRight(b.String(), "\n"))
 }
 
+// renderErrorView 专门渲染错误状态，提供可退出的视图。
+func (m model) renderErrorView() string {
+	title := errorTitleStyle.Render("Something went wrong")
+	message := "(n/a)"
+	if m.err != nil {
+		message = m.err.Error()
+	}
+	body := errorPaneStyle.Render(errorMessageStyle.Render(message))
+	help := errorHelpStyle.Render(" esc: dismiss • q: quit")
+	return docStyle.Render(lipgloss.JoinVertical(lipgloss.Left, title, body, help))
+}
+
 // portsForSearch 是一个辅助函数，将端口号列表转换为一个用空格分隔的字符串，
 // 以便用于模糊搜索。
 func portsForSearch(ports []uint32) string {
@@ -588,4 +623,41 @@ func Start(filter string) {
 		fmt.Fprintf(os.Stderr, "Error running program: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+// formatProcessDetails 将 GetProcessDetails 返回的原始字符串美化为带标签对齐的视图。
+func formatProcessDetails(details string) string {
+	lines := strings.Split(strings.TrimSpace(details), "\n")
+	if len(lines) == 0 {
+		return faintStyle.Render("(no details)")
+	}
+
+	rows := make([]string, 0, len(lines))
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			rows = append(rows, "")
+			continue
+		}
+		label, value := splitDetailLine(line)
+		if label == "" {
+			rows = append(rows, detailValueStyle.Render(value))
+			continue
+		}
+		labelCell := detailLabelStyle.Render(label + ":")
+		valueCell := detailValueStyle.Render(value)
+		rows = append(rows, lipgloss.JoinHorizontal(lipgloss.Top, labelCell, " ", valueCell))
+	}
+
+	return strings.Join(rows, "\n")
+}
+
+func splitDetailLine(line string) (string, string) {
+	if idx := strings.Index(line, ":\t"); idx != -1 {
+		return strings.TrimSpace(line[:idx]), strings.TrimSpace(line[idx+2:])
+	}
+	if idx := strings.Index(line, ":"); idx != -1 {
+		return strings.TrimSpace(line[:idx]), strings.TrimSpace(line[idx+1:])
+	}
+	return "", line
 }
