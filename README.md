@@ -32,11 +32,13 @@ Run `gokill` in your terminal to start the interactive interface. You can immedi
 | `down`/`j` | Move cursor down |
 | `/` | Enter search/filter mode |
 | `enter` | Kill selected process (in navigation mode) / Exit search mode |
-| `esc` | Exit search mode / Close overlays (details, error, ports-only) |
+| `esc` | Exit search mode / Close overlays (details, error, ports-only, dependency tree, help) |
 | `p` | Pause selected process (SIGSTOP) |
 | `r` | Resume selected process (SIGCONT) |
 | `i` | Show process details |
 | `P` | Toggle ports-only view |
+| `T` | Open dependency tree (T-mode) for the selected process |
+| `?` | Open contextual help overlay for the current mode |
 | `ctrl+r` | Refresh process list |
 | `q`/`ctrl+c` | Quit |
 
@@ -63,6 +65,21 @@ You can tune the port scan timeout (per process) via `GOKILL_PORT_TIMEOUT_MS` (d
 ```sh
 export GOKILL_PORT_TIMEOUT_MS=200
 ```
+
+### Dependency Tree Mode (T-mode)
+
+Press `T` on a selected process to enter a full-screen dependency tree view rooted at that process. In T-mode:
+
+- Use `up`/`down` (`j`/`k`) to move the cursor.
+- Use `left`/`right` (`h`/`l`) or `space` to fold/unfold branches. On `… (deeper)` lines this drills deeper; on `… (N more)` it pages siblings.
+- Press `enter`/`o` to make the selected node the new root; `u` moves the root up to its parent.
+- Press `/` to filter the tree by text or PID; `S` toggles “alive-only” and `L` toggles “listening-only”.
+- Press `i` to open details for the selected node, or `x`/`p`/`r` to kill, pause, or resume that node (with a confirmation prompt).
+- Press `esc` to leave T-mode and return to the main list.
+
+### Help Overlay
+
+Press `?` at any time to open a help overlay summarizing the available keybindings for the current view (main list or T-mode). Press `?` or `esc` again to close it.
 
 ## Common Errors & Remedies
 
