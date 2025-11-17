@@ -32,7 +32,7 @@ Run `gokill` in your terminal to start the interactive interface. You can immedi
 | `down`/`j` | Move cursor down |
 | `/` | Enter search/filter mode |
 | `enter` | Kill selected process (in navigation mode) / Exit search mode |
-| `esc` | Exit search mode |
+| `esc` | Exit search mode / Close overlays (details, error, ports-only) |
 | `p` | Pause selected process (SIGSTOP) |
 | `r` | Resume selected process (SIGCONT) |
 | `i` | Show process details |
@@ -42,7 +42,7 @@ Run `gokill` in your terminal to start the interactive interface. You can immedi
 
 ### Details Mode
 
-Press `i` on a selected process to open a details view showing PID, user, CPU/MEM, start time, and command. Press `q`, `esc`, or `i` again to return.
+Press `i` on a selected process to open a details view showing PID, user, CPU/MEM, start time, and command. Press `esc` to return to the list once you are done.
 
 ### Ports-only View
 
@@ -63,6 +63,17 @@ You can tune the port scan timeout (per process) via `GOKILL_PORT_TIMEOUT_MS` (d
 ```sh
 export GOKILL_PORT_TIMEOUT_MS=200
 ```
+
+## Common Errors & Remedies
+
+| Error message | When it appears | Suggested fix |
+| --- | --- | --- |
+| `operation not permitted` | You tried to send a signal to a root/protected process without enough privileges. | Run `gokill` with `sudo` or target processes owned by your user. |
+| `process with pid XXX not found` | The process exited (or the PID was reassigned) before the signal landed. | Press `ctrl+r` to refresh the list and pick another process. |
+| `failed to get user/create time/...` (shown in warnings) | `gopsutil` could not read that attribute. | Usually safe to ignore; running with higher privileges can reduce these warnings. |
+| `connection scan timeout` (with `GOKILL_SCAN_PORTS` enabled) | The port scan took too long or was blocked by a firewall. | Increase `GOKILL_PORT_TIMEOUT_MS` or disable port scanning. |
+
+The error screen appears as a red pane with the prompt `esc: dismiss • q: quit`, so you can return to the main view without quitting the program.
 
 ## Related
 

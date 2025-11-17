@@ -248,6 +248,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "i":
 			if len(m.filtered) > 0 {
 				m.showDetails = true
+				m.processDetails = ""
 				p := m.filtered[m.cursor]
 				return m, getProcessDetails(int(p.Pid))
 			}
@@ -583,10 +584,7 @@ func (m model) renderPortPane() string {
 // renderErrorView 专门渲染错误状态，提供可退出的视图。
 func (m model) renderErrorView() string {
 	title := errorTitleStyle.Render("Something went wrong")
-	message := "(n/a)"
-	if m.err != nil {
-		message = m.err.Error()
-	}
+	message := friendlyErrorMessage(m.err)
 	body := errorPaneStyle.Render(errorMessageStyle.Render(message))
 	help := errorHelpStyle.Render(" esc: dismiss • q: quit")
 	return docStyle.Render(lipgloss.JoinVertical(lipgloss.Left, title, body, help))
@@ -660,4 +658,25 @@ func splitDetailLine(line string) (string, string) {
 		return strings.TrimSpace(line[:idx]), strings.TrimSpace(line[idx+1:])
 	}
 	return "", line
+}
+
+// friendlyErrorMessage 为常见错误提供更直观的提示，同时保留原始信息。
+func friendlyErrorMessage(err error) string {
+	if err == nil {
+		return "(n/a)"
+	}
+
+	raw := strings.TrimSpace(err.Error())
+	lower := strings.ToLower(raw)
+
+	switch {
+	case strings.Contains(lower, "operation not permitted") || strings.Contains(lower, "permission denied"):
+		return fmt.Sprintf("%s\n\nHint: try running gokill with sudo or target processes owned by your user.", raw)
+	case strings.Contains(lower, "not found") || strings.Contains(lower, "no such process"):
+		return fmt.Sprintf("%s\n\nHint: the process may have already exited. Refresh (ctrl+r) and try again.", raw)
+	case strings.Contains(lower, "already finished"):
+		return fmt.Sprintf("%s\n\nHint: that PID exited just before the signal arrived. Refresh the list.", raw)
+	default:
+		return raw
+	}
 }
