@@ -4,6 +4,8 @@
 
 This project is a complete rewrite and modernization of the original [gkill](https://github.com/heppu/gkill), rebuilt from the ground up with modern Go, [Bubble Tea](https://github.com/charmbracelet/bubbletea), and fuzzy search capabilities.
 
+For a Chinese version of this document, see: `README_zh.md`.
+
 ## Installation
 
 Ensure you have a working Go environment. You can install `gokill` with `go install`:
