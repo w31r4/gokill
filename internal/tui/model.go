@@ -78,6 +78,9 @@ type model struct {
 	// Phase 4: filter and toggles for T-mode
 	depAliveOnly bool
 	depPortsOnly bool
+
+	// help overlay
+	helpOpen bool
 }
 
 // InitialModel 创建并返回应用的初始状态模型。
@@ -183,6 +186,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// 4. 处理用户按键输入
 	case tea.KeyMsg:
+		// Help overlay handling
+		if m.helpOpen {
+			switch msg.String() {
+			case "?", "esc":
+				m.helpOpen = false
+				return m, nil
+			case "ctrl+c", "q":
+				return m, tea.Quit
+			}
+			return m, nil
+		}
 		// Confirm overlay handling takes precedence (except errors already handled above).
 		if m.confirm != nil {
 			switch msg.String() {
@@ -231,6 +245,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "/":
 				m.textInput.Focus()
 				return m, nil
+			case "?":
+				m.helpOpen = true
+				return m, nil
 			case "S":
 				m.depAliveOnly = !m.depAliveOnly
 				if c := len(applyDepFilters(m, buildDepLines(m))); m.depCursor >= c {
@@ -268,10 +285,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				ln := lines[m.depCursor]
 				if ln.isMore {
-					// collapse parent
+					// collapse parent and reset deeper/page state
 					st := m.depExpanded[ln.parent]
 					st.expanded = false
 					st.page = 1
+					st.depthExtend = 0
 					m.depExpanded[ln.parent] = st
 				} else if ln.pid != 0 {
 					st := m.depExpanded[ln.pid]
@@ -297,11 +315,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				ln := lines[m.depCursor]
 				if ln.isMore {
 					st := m.depExpanded[ln.parent]
-					if st.page == 0 {
-						st.page = 1
+					if ln.isDeeper {
+						st.depthExtend++
+						st.expanded = true
+					} else {
+						if st.page == 0 {
+							st.page = 1
+						}
+						st.page++
+						st.expanded = true
 					}
-					st.page++
-					st.expanded = true
 					m.depExpanded[ln.parent] = st
 				} else if ln.pid != 0 {
 					st := m.depExpanded[ln.pid]
@@ -327,11 +350,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				ln := lines[m.depCursor]
 				if ln.isMore {
 					st := m.depExpanded[ln.parent]
-					if st.page == 0 {
-						st.page = 1
+					if ln.isDeeper {
+						st.depthExtend++
+						st.expanded = true
+					} else {
+						if st.page == 0 {
+							st.page = 1
+						}
+						st.page++
+						st.expanded = true
 					}
-					st.page++
-					st.expanded = true
 					m.depExpanded[ln.parent] = st
 				} else if ln.pid != 0 {
 					st := m.depExpanded[ln.pid]
@@ -466,6 +494,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		case "ctrl+r":
 			return m, getProcesses
+		case "?":
+			m.helpOpen = true
+			return m, nil
 		case "/":
 			m.textInput.Focus()
 			return m, nil
@@ -560,15 +591,18 @@ type fuzzyProcessSource struct {
 
 // --- Dependency tree structures ---
 type depNodeState struct {
-	expanded bool
-	page     int
+	expanded    bool
+	page        int
+	depthExtend int
 }
 
 type depLine struct {
-	pid    int32
-	parent int32
-	isMore bool
-	text   string
+	pid      int32
+	parent   int32
+	isMore   bool
+	text     string
+	depth    int
+	isDeeper bool
 }
 
 type confirmPrompt struct {
@@ -715,6 +749,10 @@ var (
 	confirmPaneStyle    = paneStyle.Copy().BorderForeground(lipgloss.Color("178")).Width(70).Padding(1, 2)
 	confirmHelpStyle    = faintStyle.Copy().MarginTop(1)
 	confirmMessageStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("15"))
+
+	// help styles
+	helpTitleStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("12")).Bold(true)
+	helpPaneStyle  = paneStyle.Copy().BorderForeground(lipgloss.Color("12")).Width(78).Padding(1, 2)
 )
 
 // 定义了进程列表视口（Viewport）的高度，即一次显示多少行。
@@ -738,6 +776,11 @@ func (m model) View() string {
 	// 确认对话优先级次之（覆盖当前模式）。
 	if m.confirm != nil {
 		return m.renderConfirmView()
+	}
+
+	// Help overlay
+	if m.helpOpen {
+		return m.renderHelpView()
 	}
 
 	// 详情视图优先级高于其它模式（包括依赖模式）。
@@ -814,8 +857,8 @@ func (m model) renderFooter() string {
 		// 当搜索框激活时，显示退出搜索的提示。
 		help.WriteString(faintStyle.Render(" enter/esc to exit search"))
 	} else {
-		// 否则，显示主界面的快捷键帮助。
-		help.WriteString(faintStyle.Render(" /: search • i: info • P: ports-only • ctrl+r: refresh • r: resume • p: pause • enter: kill • q: quit"))
+		// 精简主界面帮助，更多按 ? 查看
+		help.WriteString(faintStyle.Render(" ?: help • / search • P ports • ctrl+r refresh • i info • enter kill • p pause • r resume • q quit"))
 	}
 	return help.String()
 }
@@ -862,16 +905,36 @@ func (m model) renderDependencyView() string {
 		fmt.Fprintln(&b, "")
 	}
 
+	childrenMap := m.buildChildrenMap()
 	for i := start; i < end; i++ {
 		ln := lines[i]
 		lineText := ln.text
-		// apply status color for non-selected rows
 		if it := m.findProcess(ln.pid); it != nil {
+			// Determine if this node has undisplayed dependencies
+			hasKids := len(childrenMap[ln.pid]) > 0
+			st := m.depExpanded[ln.pid]
+			allowDepth := dependencyTreeDepth - 1 + st.depthExtend
+			hiddenDeps := hasKids && (!st.expanded || ln.depth >= allowDepth)
+			// apply status color
 			switch it.Status {
 			case process.Killed:
 				lineText = killingStyle.Render(lineText)
 			case process.Paused:
 				lineText = pausedStyle.Render(lineText)
+			}
+			// append a subtle marker when there are hidden deps
+			if hiddenDeps {
+				lineText = lineText + faintStyle.Render(" +")
+			}
+			if i == m.depCursor {
+				sel := selectedStyle
+				if hiddenDeps {
+					// add a faint hint inside selection too
+					fmt.Fprintln(&b, sel.Render("❯ "+ln.text+faintStyle.Render(" +")))
+				} else {
+					fmt.Fprintln(&b, sel.Render("❯ "+ln.text))
+				}
+				continue
 			}
 		}
 		if i == m.depCursor {
@@ -893,7 +956,7 @@ func (m model) renderDependencyView() string {
 		filterBadge += " [listening-only]"
 	}
 
-	help := faintStyle.Render(" /: filter • S: alive-only • L: listening-only • left/right/space: fold/unfold • enter/o: set root • u: up • a: ancestors • x: kill • p: pause • r: resume • esc: back • ctrl+r: refresh • i: details" + filterBadge)
+	help := faintStyle.Render(" ?: help • / filter • S alive • L listen • ←/→/space fold • enter/o root • u up • esc back • i details" + filterBadge)
 	fmt.Fprintln(&b, "")
 	fmt.Fprintln(&b, help)
 	return docStyle.Render(strings.TrimRight(b.String(), "\n"))
@@ -908,8 +971,8 @@ func buildDepLines(m model) []depLine {
 	childrenMap := m.buildChildrenMap()
 
 	var lines []depLine
-	// 根行
-	lines = append(lines, depLine{pid: root.Pid, parent: 0, isMore: false, text: fmt.Sprintf("%s (%d)", root.Executable, root.Pid)})
+	// 根行（深度0）
+	lines = append(lines, depLine{pid: root.Pid, parent: 0, isMore: false, text: fmt.Sprintf("%s (%d)", root.Executable, root.Pid), depth: 0})
 
 	// 递归子节点
 	var walk func(pid int32, prefix string, depth int)
@@ -947,7 +1010,7 @@ func buildDepLines(m model) []depLine {
 			last := (i == show-1) && (show == len(kids))
 			connector := branchSymbol(last)
 			line := fmt.Sprintf("%s%s %s (%d)", prefix, connector, child.Executable, child.Pid)
-			lines = append(lines, depLine{pid: child.Pid, parent: pid, text: line})
+			lines = append(lines, depLine{pid: child.Pid, parent: pid, text: line, depth: depth + 1})
 
 			nextPrefix := prefix
 			if last {
@@ -956,12 +1019,14 @@ func buildDepLines(m model) []depLine {
 				nextPrefix += "│  "
 			}
 
-			if depth < dependencyTreeDepth-1 {
+			// allow per-parent deeper expansion beyond global depth
+			allowed := dependencyTreeDepth - 1 + m.depExpanded[pid].depthExtend
+			if depth < allowed {
 				walk(child.Pid, nextPrefix, depth+1)
 			} else if len(childrenMap[child.Pid]) > 0 {
-				// 深度到达上限，提示还有更深层
-				moreLine := fmt.Sprintf("%s└─ ... (deeper)", nextPrefix)
-				lines = append(lines, depLine{pid: 0, parent: child.Pid, isMore: false, text: moreLine})
+				// depth limit reached; add interactive deeper placeholder
+				moreLine := fmt.Sprintf("%s└─ … (deeper)", nextPrefix)
+				lines = append(lines, depLine{pid: 0, parent: child.Pid, isMore: true, isDeeper: true, text: moreLine, depth: depth + 1})
 			}
 		}
 
@@ -969,8 +1034,8 @@ func buildDepLines(m model) []depLine {
 			// 还有更多同级子项，提供分页提示行
 			more := len(kids) - show
 			connector := branchSymbol(true)
-			moreLine := fmt.Sprintf("%s%s ... (%d more)", prefix, connector, more)
-			lines = append(lines, depLine{pid: 0, parent: pid, isMore: true, text: moreLine})
+			moreLine := fmt.Sprintf("%s%s … (%d more)", prefix, connector, more)
+			lines = append(lines, depLine{pid: 0, parent: pid, isMore: true, isDeeper: false, text: moreLine, depth: depth})
 		}
 	}
 
@@ -1177,6 +1242,33 @@ func (m model) renderConfirmView() string {
 	body := confirmPaneStyle.Render(confirmMessageStyle.Render(msg))
 	help := confirmHelpStyle.Render(" y/enter: confirm • n/esc: cancel • q: quit")
 	return docStyle.Render(lipgloss.JoinVertical(lipgloss.Left, title, body, help))
+}
+
+// renderHelpView 渲染帮助覆盖层，提供简洁的按键说明。
+func (m model) renderHelpView() string {
+	var b strings.Builder
+	title := helpTitleStyle.Render("Help / Commands")
+	fmt.Fprintln(&b, title)
+	if m.depMode {
+		fmt.Fprintln(&b, helpPaneStyle.Render(strings.Join([]string{
+			"T-mode (dependency tree):",
+			"  up/down (j/k): move cursor",
+			"  left/right/space (h/l/space): fold/unfold; on ‘… (deeper)’ drill deeper; on ‘… (N more)’ page",
+			"  enter/o: set current node as root; u: root up; a: toggle ancestors",
+			"  /: filter • S: alive-only • L: listening-only",
+			"  i: details • x: kill • p: pause • r: resume",
+			"  esc: back • ctrl+r: refresh • ?: close help",
+		}, "\n")))
+	} else {
+		fmt.Fprintln(&b, helpPaneStyle.Render(strings.Join([]string{
+			"Main list:",
+			"  up/down (j/k): move cursor",
+			"  /: search • enter: kill • p: pause • r: resume • i: details",
+			"  P: ports-only • ctrl+r: refresh • T: dependency tree",
+			"  q/ctrl+c: quit • ?: close help",
+		}, "\n")))
+	}
+	return docStyle.Render(strings.TrimRight(b.String(), "\n"))
 }
 
 // portsForSearch 是一个辅助函数，将端口号列表转换为一个用空格分隔的字符串，
