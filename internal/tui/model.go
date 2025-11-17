@@ -66,10 +66,14 @@ type model struct {
 	portsOnly bool
 
 	// --- Dependency (T) mode state ---
-	depMode     bool
-	depRootPID  int32
-	depExpanded map[int32]depNodeState
-	depCursor   int
+	depMode          bool
+	depRootPID       int32
+	depExpanded      map[int32]depNodeState
+	depCursor        int
+	depShowAncestors bool
+
+	// --- Confirm overlay ---
+	confirm *confirmPrompt
 }
 
 // InitialModel 创建并返回应用的初始状态模型。
@@ -173,9 +177,25 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// 由于 filtered 指向同一批指针，直接返回并让 View 重新渲染即可。
 		return m, nil
 
-	// 4. 处理用户按键输入
+		// 4. 处理用户按键输入
 	case tea.KeyMsg:
-		// Dependency mode (T) takes precedence over other interactive states except errors.
+		// Confirm overlay handling takes precedence (except errors already handled above).
+		if m.confirm != nil {
+			switch msg.String() {
+			case "y", "enter":
+				op := *m.confirm
+				m.confirm = nil
+				return m, sendSignalWithStatus(int(op.pid), op.sig, op.status)
+			case "n", "esc":
+				m.confirm = nil
+				return m, nil
+			case "ctrl+c", "q":
+				return m, tea.Quit
+			}
+			return m, nil
+		}
+
+		// Dependency mode (T) takes precedence over other interactive states except errors and confirm.
 		if m.depMode {
 			switch msg.String() {
 			case "esc":
@@ -288,6 +308,36 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 				}
 				return m, nil
+			case "enter", "o":
+				lines := buildDepLines(m)
+				if len(lines) == 0 {
+					return m, nil
+				}
+				ln := lines[m.depCursor]
+				if ln.pid != 0 {
+					m.depRootPID = ln.pid
+					if m.depExpanded == nil {
+						m.depExpanded = make(map[int32]depNodeState)
+					}
+					m.depExpanded = map[int32]depNodeState{ln.pid: {expanded: true, page: 1}}
+					m.depCursor = 0
+				}
+				return m, nil
+			case "u":
+				if root := m.findProcess(m.depRootPID); root != nil {
+					if parent := m.findProcess(root.PPid); parent != nil {
+						m.depRootPID = parent.Pid
+						if m.depExpanded == nil {
+							m.depExpanded = make(map[int32]depNodeState)
+						}
+						m.depExpanded = map[int32]depNodeState{parent.Pid: {expanded: true, page: 1}}
+						m.depCursor = 0
+					}
+				}
+				return m, nil
+			case "a":
+				m.depShowAncestors = !m.depShowAncestors
+				return m, nil
 			case "i":
 				lines := buildDepLines(m)
 				if len(lines) == 0 {
@@ -298,6 +348,42 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.showDetails = true
 					m.processDetails = ""
 					return m, getProcessDetails(int(ln.pid))
+				}
+				return m, nil
+			case "x":
+				lines := buildDepLines(m)
+				if len(lines) == 0 {
+					return m, nil
+				}
+				ln := lines[m.depCursor]
+				if ln.pid != 0 {
+					if it := m.findProcess(ln.pid); it != nil {
+						m.confirm = &confirmPrompt{pid: ln.pid, name: it.Executable, op: "kill", sig: syscall.SIGTERM, status: process.Killed}
+					}
+				}
+				return m, nil
+			case "p":
+				lines := buildDepLines(m)
+				if len(lines) == 0 {
+					return m, nil
+				}
+				ln := lines[m.depCursor]
+				if ln.pid != 0 {
+					if it := m.findProcess(ln.pid); it != nil {
+						m.confirm = &confirmPrompt{pid: ln.pid, name: it.Executable, op: "pause", sig: syscall.SIGSTOP, status: process.Paused}
+					}
+				}
+				return m, nil
+			case "r":
+				lines := buildDepLines(m)
+				if len(lines) == 0 {
+					return m, nil
+				}
+				ln := lines[m.depCursor]
+				if ln.pid != 0 {
+					if it := m.findProcess(ln.pid); it != nil && it.Status == process.Paused {
+						m.confirm = &confirmPrompt{pid: ln.pid, name: it.Executable, op: "resume", sig: syscall.SIGCONT, status: process.Alive}
+					}
 				}
 				return m, nil
 			}
@@ -441,6 +527,14 @@ type depLine struct {
 	text   string
 }
 
+type confirmPrompt struct {
+	pid    int32
+	name   string
+	op     string // kill | pause | resume
+	sig    syscall.Signal
+	status process.Status
+}
+
 // String 是 `fuzzy.Source` 接口要求的方法。
 // 它返回在给定索引 `i` 处的项目的字符串表示形式，模糊搜索将在这个字符串上进行匹配。
 // 为了让用户可以同时通过进程名、PID、用户名或端口号进行搜索，我们将这几项信息拼接成一个单一的字符串。
@@ -571,6 +665,12 @@ var (
 	errorHelpStyle = faintStyle.Copy().MarginTop(1)
 	// errorMessageStyle 用于高亮错误信息本体。
 	errorMessageStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))
+
+	// confirm styles
+	confirmTitleStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("178")).Bold(true)
+	confirmPaneStyle    = paneStyle.Copy().BorderForeground(lipgloss.Color("178")).Width(70).Padding(1, 2)
+	confirmHelpStyle    = faintStyle.Copy().MarginTop(1)
+	confirmMessageStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("15"))
 )
 
 // 定义了进程列表视口（Viewport）的高度，即一次显示多少行。
@@ -579,6 +679,7 @@ const (
 	dependencyTreeDepth      = 3
 	dependencyTreeChildLimit = 5
 	dependencyViewHeight     = 18
+	ancestorChainLimit       = 6
 )
 
 // View 函数根据当前的应用状态（model）生成一个字符串，用于在终端上显示。
@@ -588,6 +689,11 @@ func (m model) View() string {
 	// 如果模型中存在错误，则显示错误视图。
 	if m.err != nil {
 		return m.renderErrorView()
+	}
+
+	// 确认对话优先级次之（覆盖当前模式）。
+	if m.confirm != nil {
+		return m.renderConfirmView()
 	}
 
 	// 详情视图优先级高于其它模式（包括依赖模式）。
@@ -679,6 +785,12 @@ func (m model) renderDependencyView() string {
 		return docStyle.Render(lipgloss.JoinVertical(lipgloss.Left, title, hint))
 	}
 
+	// Ancestor chain (optional)
+	var anc []string
+	if m.depShowAncestors {
+		anc = m.buildAncestorLines(root)
+	}
+
 	lines := buildDepLines(m)
 
 	// 视口计算，围绕光标
@@ -698,6 +810,13 @@ func (m model) renderDependencyView() string {
 	var b strings.Builder
 	title := detailTitleStyle.Render(fmt.Sprintf("Dependency Tree: %s (%d)", root.Executable, root.Pid))
 	fmt.Fprintln(&b, title)
+	if len(anc) > 0 {
+		fmt.Fprintln(&b, faintStyle.Render("Ancestors"))
+		for _, l := range anc {
+			fmt.Fprintln(&b, faintStyle.Render(l))
+		}
+		fmt.Fprintln(&b, "")
+	}
 
 	for i := start; i < end; i++ {
 		ln := lines[i]
@@ -708,7 +827,7 @@ func (m model) renderDependencyView() string {
 		}
 	}
 
-	help := faintStyle.Render(" up/down: move • left/right/space: fold/unfold • esc: back • ctrl+r: refresh • i: details")
+	help := faintStyle.Render(" up/down: move • left/right/space: fold/unfold • enter/o: set root • u: up • a: ancestors • x: kill • p: pause • r: resume • esc: back • ctrl+r: refresh • i: details")
 	fmt.Fprintln(&b, "")
 	fmt.Fprintln(&b, help)
 	return docStyle.Render(strings.TrimRight(b.String(), "\n"))
@@ -814,6 +933,35 @@ func (m model) findProcess(pid int32) *process.Item {
 	return nil
 }
 
+// buildAncestorLines 生成从当前 root 向上的有限祖先进程链（最多 ancestorChainLimit）。
+func (m model) buildAncestorLines(root *process.Item) []string {
+	if root == nil {
+		return nil
+	}
+	chain := make([]*process.Item, 0, ancestorChainLimit)
+	cur := root
+	for i := 0; i < ancestorChainLimit; i++ {
+		if cur.PPid == 0 {
+			break
+		}
+		p := m.findProcess(cur.PPid)
+		if p == nil {
+			break
+		}
+		chain = append(chain, p)
+		cur = p
+	}
+	if len(chain) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(chain))
+	for i := len(chain) - 1; i >= 0; i-- {
+		indent := strings.Repeat("   ", len(chain)-1-i)
+		out = append(out, fmt.Sprintf("%s└─ %s (%d)", indent, chain[i].Executable, chain[i].Pid))
+	}
+	return out
+}
+
 // renderProcessPane 负责渲染左侧的进程列表面板。
 func (m model) renderProcessPane() string {
 	var b strings.Builder
@@ -903,6 +1051,19 @@ func (m model) renderErrorView() string {
 	message := friendlyErrorMessage(m.err)
 	body := errorPaneStyle.Render(errorMessageStyle.Render(message))
 	help := errorHelpStyle.Render(" esc: dismiss • q: quit")
+	return docStyle.Render(lipgloss.JoinVertical(lipgloss.Left, title, body, help))
+}
+
+// renderConfirmView 渲染操作确认对话。
+func (m model) renderConfirmView() string {
+	if m.confirm == nil {
+		return ""
+	}
+	title := confirmTitleStyle.Render("Confirm Action")
+	op := strings.Title(m.confirm.op)
+	msg := fmt.Sprintf("Action: %s\nProcess: %s (%d)", op, m.confirm.name, m.confirm.pid)
+	body := confirmPaneStyle.Render(confirmMessageStyle.Render(msg))
+	help := confirmHelpStyle.Render(" y/enter: confirm • n/esc: cancel • q: quit")
 	return docStyle.Render(lipgloss.JoinVertical(lipgloss.Left, title, body, help))
 }
 
