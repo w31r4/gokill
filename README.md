@@ -73,7 +73,9 @@ export GOKILL_PORT_TIMEOUT_MS=200
 Press `T` on a selected process to enter a full-screen dependency tree view rooted at that process. In T-mode:
 
 - Use `up`/`down` (`j`/`k`) to move the cursor.
-- Use `left`/`right` (`h`/`l`) or `space` to fold/unfold branches. On `… (deeper)` lines this drills deeper; on `… (N more)` it pages siblings.
+- Use `left`/`right` (`h`/`l`) or `space` to fold/unfold branches.  
+  When the cursor is on a `… (deeper)` line, pressing `right`/`l` or `space` drills into a deeper level of the subtree;  
+  when it is on a `… (N more)` line, pressing `right`/`l` or `space` pages through additional siblings at the same level.
 - Press `enter`/`o` to make the selected node the new root; `u` moves the root up to its parent.
 - Press `/` to filter the tree by text or PID; `S` toggles “alive-only” and `L` toggles “listening-only”.
 - Press `i` to open details for the selected node, or `x`/`p`/`r` to kill, pause, or resume that node (with a confirmation prompt).

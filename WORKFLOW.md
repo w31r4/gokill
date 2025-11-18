@@ -61,14 +61,14 @@ graph TD
 ### 1. 启动流程
 
 1.  **入口 (`main.go`)**: 用户在命令行执行 `gkill`。`main` 函数捕获所有命令行参数作为初始的过滤条件。
-2.  **启动TUI (`tui.Start`)**: `main` 函数调用 [`tui.Start()`](internal/tui/model.go:447)，这是UI模块的入口。
+2.  **启动TUI (`tui.Start`)**: `main` 函数调用 [`tui.Start()`](internal/tui/model.go:120)，这是UI模块的入口。
 3.  **创建程序实例**: `Start` 函数内部通过 `tea.NewProgram(InitialModel(filter))` 创建一个 `Bubble Tea` 程序实例。
 4.  **初始化Model (`InitialModel`)**:
     *   [`InitialModel`](internal/tui/model.go:55) 函数负责创建应用的初始状态 `model`。
     *   它会尝试从缓存文件加载上一次的进程列表 ([`process.Load()`](internal/process/cache.go:34))，这样即使用户网络慢或进程多，UI也能立即显示一些数据，避免空白。
     *   同时，它初始化了搜索框等UI组件。
 5.  **执行初始化命令 (`Init`)**:
-    *   `Bubble Tea` 运行时调用 [`model.Init()`](internal/tui/model.go:75) 方法。
+    *   `Bubble Tea` 运行时调用 [`model.Init()`](internal/tui/update.go:24) 方法。
     *   此方法返回一个批处理命令 `tea.Batch`，该命令会同时执行两个操作：
         *   让搜索框获得焦点。
         *   执行 `getProcesses` 命令，开始异步获取最新的进程列表。
@@ -94,11 +94,13 @@ graph TD
 
 ### 3. UI 事件循环 (M-V-U 架构)
 
-`Bubble Tea` 的核心是 **Model-View-Update** 架构，所有逻辑都在 [`internal/tui/model.go`](internal/tui/model.go) 中。
+`Bubble Tea` 的核心是 **Model-View-Update** 架构，逻辑主要分布在：
 
-*   **Model**: [`model`](internal/tui/model.go:36) 结构体，存储了应用的所有状态（完整进程列表、过滤后的列表、光标位置、错误信息等）。
-*   **View**: [`View()`](internal/tui/model.go:300) 方法，根据当前的 `model` 状态，生成要在终端上显示的字符串。它是一个“纯函数”，只负责渲染。
-*   **Update**: [`Update()`](internal/tui/model.go:112) 方法，是整个应用的“状态机”。它接收 **消息 (Message)**，根据消息类型更新 `model`，并可以返回一个 **命令 (Command)** 来执行新的异步操作。
+*   **Model**: [`model`](internal/tui/model.go) 结构体，存储应用的整体状态（完整进程列表、过滤后的列表、光标位置、错误信息等），以及依赖树视图状态 `dep depViewState`（见 [`internal/tui/dependency.go`](internal/tui/dependency.go)）。
+*   **View**: [`View()`](internal/tui/view.go) 方法，根据当前的 `model` 状态生成要在终端上显示的字符串。它是一个“纯函数”，只负责渲染：
+    *   普通列表视图、端口面板、详情视图、错误/确认/帮助覆盖层；
+    *   依赖树视图（T 模式）的实际渲染逻辑。
+*   **Update**: [`Update()`](internal/tui/update.go) 方法，是整个应用的“状态机”。它接收 **消息 (Message)**，根据消息类型更新 `model`，并可以返回一个 **命令 (Command)** 来执行新的异步操作。按键更新进一步拆分为若干辅助函数，例如 `updateHelpKey` / `updateConfirmKey` / `updateDepModeKey` / `updateMainListKey` 等，便于独立理解各模式的行为。
 
 **事件处理流程**:
 
@@ -110,8 +112,8 @@ graph TD
 3.  `View` 函数在渲染时会检查 `model.warnings`。如果其中有内容，就会在UI上显示一个警告计数，告知用户部分信息可能不完整。
 4.  当用户按下按键（如 `j`, `k`, `/`），`Bubble Tea` 运行时会生成一个 `tea.KeyMsg` 消息。
 4.  `Update` 函数接收到 `tea.KeyMsg`，判断按键类型：
-    *   如果是 `j`/`k`，则修改 `model.cursor` 的值来移动光标。
-    *   如果是 `/`，则激活搜索框。
+    *   如果是 `up/down`（或 `j/k`），则修改 `model.cursor` 或 `model.dep.cursor` 的值来移动光标（取决于是否处于 T 模式）。
+    *   如果是 `/`，则激活搜索框或在 T 模式中激活树过滤。
     *   如果是 `enter/p/r`，则返回一个 `sendSignalWithStatus` 命令向选中进程发送信号；仅当命令成功返回后，才会接收一条 `signalOKMsg` 来更新 UI 中该进程的 `Status`。
     *   如果是 `P`（大写），进入“仅显示占用端口的进程”模式（ports-only）；按 `Esc` 退出该模式，用于快速巡视当前端口占用情况。
 5.  每次 `Update` 函数返回后，`Bubble Tea` 都会自动调用 `View` 函数，使用更新后的 `model` 来重绘界面。
@@ -174,3 +176,44 @@ graph TD
 
 - 若首次采样为 0，则 `sleep 200ms` 后再采样一次；
 - 相关实现：`internal/process/process.go:231-240`。
+
+### E. 依赖树视图 (T 模式)
+
+依赖树视图用于展示基于 PPID 关系构建的进程树，并提供按需展开/分页、过滤和信号操作能力。其实现分为三部分：
+
+1.  **状态结构 (`depViewState`)**  
+    为避免在主 `model` 上散落过多与 T 模式相关的字段，依赖树状态被聚合在 [`depViewState`](internal/tui/dependency.go) 中，并作为 `model.dep` 挂载：
+
+    - `mode bool`：是否处于 T 模式。
+    - `rootPID int32`：当前树的根进程 PID。
+    - `expanded map[int32]depNodeState`：每个节点的展开/分页状态。
+    - `cursor int`：当前选中行（在扁平化后的依赖树行列表中的索引）。
+    - `showAncestors bool`：是否显示祖先进程链。
+    - `aliveOnly bool`：是否仅显示存活进程。
+    - `portsOnly bool`：是否仅显示有监听端口的进程。
+
+2.  **结构构建与过滤 (`dependency.go`)**  
+    [`internal/tui/dependency.go`](internal/tui/dependency.go) 负责把原始进程列表转换为可渲染的树形行：
+
+    - `buildChildrenMap`：基于 `PPid` 构建父 PID → 子进程列表的映射。
+    - `buildDepLines`：从 `dep.rootPID` 出发，结合 `dep.expanded`、`dependencyTreeDepth` 等配置，将树形结构扁平化为 `[]depLine`：
+        - 支持每个父节点的分页 (`page`) 与深度扩展 (`depthExtend`)；
+        - 在达到深度限制时插入 `… (deeper)` 行，在超出子数量限制时插入 `… (N more)` 行。
+    - `applyDepFilters`：在 `buildDepLines` 的结果上，按照当前的过滤条件筛选：
+        - 文本/数字过滤（进程名、文本行内容或 PID）；
+        - `aliveOnly` / `portsOnly` 开关。
+
+3.  **按键交互与渲染 (`update.go` / `view.go`)**  
+
+    - 进入/退出 T 模式：
+        - 在主列表中按 `T`，由 [`updateMainListKey`](internal/tui/update.go) 将 `dep.mode` 置为 `true`，并以当前选中进程作为 `dep.rootPID`；
+        - 在 T 模式中按 `esc`，由 [`updateDepModeKey`](internal/tui/update.go) 将 `dep.mode` 置为 `false`，并清理 `dep.expanded` 等状态。
+    - T 模式按键处理：
+        - [`updateDepModeKey`](internal/tui/update.go) 负责处理 T 模式下的所有键：方向键、`space` 折叠/展开、`S`/`L` 过滤、`u`/`a` 根和祖先链、`i`/`x`/`p`/`r` 细节与信号操作等；
+        - 未处理的按键会返回 `handled=false`，由外层逻辑回退到主列表的通用处理。
+    - 渲染：
+        - [`renderDependencyView`](internal/tui/view.go) 使用 `depViewState` 与 `buildDepLines` 的结果绘制依赖树视图：
+            - 根据 `dep.cursor` 计算可视窗口（viewport），只渲染当前需要显示的行；
+            - 根据进程状态（存活/已杀/已暂停）选择不同样式，并在有隐藏子依赖时在行尾追加一个淡色的 `+` 提示；
+            - 在顶部可选显示祖先链（由 `buildAncestorLines` 提供），底部附带当前过滤状态的提示（`[filter: ...] [alive-only] [listening-only]`）。
+        - [`renderHelpView`](internal/tui/view.go) 在 `dep.mode` 为 `true` 时展示 T 模式专属的帮助文案，列出可用的按键和操作说明。
