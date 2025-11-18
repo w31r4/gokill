@@ -2,7 +2,6 @@ package tui
 
 import (
 	"fmt"
-	"sort"
 	"strings"
 
 	"github.com/w31r4/gokill/internal/process"
@@ -11,115 +10,106 @@ import (
 )
 
 // --- UI 样式定义 ---
-// 使用 `charmbracelet/lipgloss` 库来定义TUI的样式。
-// 这种方式使得样式的管理和复用变得非常方便。
+// 使用 `charmbracelet/lipgloss` 库来集中定义TUI的所有样式。
+// 这种方式使得样式的管理、复用和主题化变得非常方便和清晰。
 var (
-	// docStyle 是整个应用的基础样式，设置了外边距。
-	// 收紧整体上下外边距让界面更紧凑。
+	// docStyle 是整个应用窗口的基础样式，定义了外边距。
 	docStyle = lipgloss.NewStyle().Margin(0, 1)
-	// selectedStyle 是当前光标选中行的样式，设置了背景色和前景色。
+	// selectedStyle 定义了列表中当前光标选中行的样式，具有醒目的背景色和前景色。
 	selectedStyle = lipgloss.NewStyle().Background(lipgloss.Color("62")).Foreground(lipgloss.Color("255"))
-	// faintStyle 用于渲染次要信息（如帮助文本），使其颜色变淡。
+	// faintStyle 用于渲染次要信息（如帮助文本、状态标签），使其颜色变淡以降低视觉干扰。
 	faintStyle = lipgloss.NewStyle().Faint(true)
-	// killingStyle 是标记为“已杀死”的进程的样式，使用了删除线和红色。
+	// killingStyle 定义了被标记为“已杀死”的进程的样式，使用删除线和红色来明确表示其状态。
 	killingStyle = lipgloss.NewStyle().Strikethrough(true).Foreground(lipgloss.Color("9"))
-	// pausedStyle 是标记为“已暂停”的进程的样式，使用了黄色。
+	// pausedStyle 定义了被标记为“已暂停”的进程的样式，使用黄色进行提示。
 	pausedStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("220"))
-	// listeningStyle 是监听端口的进程的样式，同样使用黄色以保持一致性。
+	// listeningStyle 定义了正在监听端口的进程的样式，同样使用黄色以引起注意。
 	listeningStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("220"))
-	// paneStyle 是左右两个面板的基础样式，定义了圆角边框和内边距。
+	// paneStyle 是所有面板（如进程列表、端口信息）的基础样式，定义了圆角边框和内边距。
 	paneStyle = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(0, 1)
-	// processPaneStyle 是左侧进程列表面板的样式，继承自 paneStyle 并设置了宽度和边框颜色。
+	// processPaneStyle 是左侧进程列表面板的专用样式，继承自 paneStyle 并设置了宽度和边框颜色。
 	processPaneStyle = paneStyle.Copy().Width(60).BorderForeground(lipgloss.Color("62"))
-	// portPaneStyle 是右侧端口列表面板的样式，继承自 paneStyle 并设置了宽度和边框颜色。
-	// 取消固定高度与居中对齐，避免出现大量垂直空白；减小宽度使其更紧凑。
+	// portPaneStyle 是右侧端口信息面板的专用样式，同样继承自 paneStyle 并进行了定制。
 	portPaneStyle = paneStyle.Copy().Width(16).BorderForeground(lipgloss.Color("220")).Align(lipgloss.Left)
-	// detailTitleStyle 渲染详情模式标题。
+	// detailTitleStyle 定义了详情视图的标题样式。
 	detailTitleStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("63")).Bold(true)
-	// detailPaneStyle 为详情内容提供柔和的边框和内边距。
+	// detailPaneStyle 定义了详情视图的内容面板样式。
 	detailPaneStyle = paneStyle.Copy().Width(80).BorderForeground(lipgloss.Color("63")).Padding(1, 2)
-	// detailLabelStyle 对详情键名做对齐和强调。
+	// detailLabelStyle 定义了详情视图中标签（如 "PID:", "User:"）的样式，使其右对齐并加粗。
 	detailLabelStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("63")).Bold(true).Width(10).Align(lipgloss.Right)
-	// detailValueStyle 用于详情值。
+	// detailValueStyle 定义了详情视图中值的样式。
 	detailValueStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("15")).MaxWidth(60)
-	// detailHelpStyle 丰富详情模式提示。
+	// detailHelpStyle 定义了详情视图底部的帮助文本样式。
 	detailHelpStyle = faintStyle.Copy().MarginTop(1)
-	// errorTitleStyle 渲染错误标题。
-	errorTitleStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Bold(true)
-	// errorPaneStyle 统一错误面板。
-	errorPaneStyle = paneStyle.Copy().BorderForeground(lipgloss.Color("9")).Width(70).Padding(1, 2)
-	// errorHelpStyle 提示错误视图退出方式。
-	errorHelpStyle = faintStyle.Copy().MarginTop(1)
-	// errorMessageStyle 用于高亮错误信息本体。
+	// errorTitleStyle, errorPaneStyle, errorHelpStyle, errorMessageStyle 定义了错误覆盖层的各种样式。
+	errorTitleStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Bold(true)
+	errorPaneStyle    = paneStyle.Copy().BorderForeground(lipgloss.Color("9")).Width(70).Padding(1, 2)
+	errorHelpStyle    = faintStyle.Copy().MarginTop(1)
 	errorMessageStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))
-
-	// confirm styles
+	// confirm...Style 定义了确认对话框覆盖层的各种样式。
 	confirmTitleStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("178")).Bold(true)
 	confirmPaneStyle    = paneStyle.Copy().BorderForeground(lipgloss.Color("178")).Width(70).Padding(1, 2)
 	confirmHelpStyle    = faintStyle.Copy().MarginTop(1)
 	confirmMessageStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("15"))
-
-	// help styles
+	// help...Style 定义了帮助信息覆盖层的各种样式。
 	helpTitleStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("12")).Bold(true)
 	helpPaneStyle  = paneStyle.Copy().BorderForeground(lipgloss.Color("12")).Width(78).Padding(1, 2)
 )
 
-// 定义了进程列表视口（Viewport）的高度，即一次显示多少行。
+// 定义了不同列表视图的“视口”（Viewport）高度，即一次在屏幕上显示多少行。
 const (
-	viewHeight           = 7
-	dependencyViewHeight = 18
+	viewHeight           = 7  // 主进程列表的视口高度。
+	dependencyViewHeight = 18 // 依赖树视图的视口高度。
 )
 
-// View 函数根据当前的应用状态（model）生成一个字符串，用于在终端上显示。
-// Bubble Tea 的运行时会不断调用这个函数来重绘界面。
-// 这个函数应该是“纯”的，即不应有任何副作用，只负责根据 `m` 的数据渲染视图。
+// View 是 Bubble Tea 架构中的核心渲染函数。
+// 它根据当前的应用状态 `m` (model) 生成一个字符串，这个字符串就是即将在终端上显示的完整UI。
+// Bubble Tea 的运行时会在每次 `Update` 函数返回后自动调用 `View` 来重绘界面。
+//
+// 这是一个“纯函数”，意味着它不应该有任何副作用（如修改模型或执行命令），
+// 它的唯一职责就是忠实地将当前状态映射为可视化的字符串。
 func (m model) View() string {
-	// 如果模型中存在错误，则显示错误视图。
+	// --- 视图调度逻辑 ---
+	// 这里的 `if` 语句链定义了不同视图模式的渲染优先级。
+	// 例如，一个错误信息应该覆盖所有其他视图，一个确认对话框应该覆盖主列表或依赖树。
 	if m.err != nil {
 		return m.renderErrorView()
 	}
-
-	// 确认对话优先级次之（覆盖当前模式）。
 	if m.confirm != nil {
 		return m.renderConfirmView()
 	}
-
-	// Help overlay
 	if m.helpOpen {
 		return m.renderHelpView()
 	}
-
-	// 详情视图优先级高于其它模式（包括依赖模式）。
 	if m.showDetails {
 		return m.renderDetailsView()
 	}
-
-	// Dependency full-screen mode.
 	if m.dep.mode {
 		return m.renderDependencyView()
 	}
 
+	// --- 默认主列表视图的渲染 ---
+	// 如果没有任何覆盖层或特殊模式被激活，则渲染主视图。
 	if len(m.processes) == 0 {
-		return "Loading processes..."
+		return "Loading processes..." // 在首次加载数据时显示一个加载提示。
 	}
 
-	if m.showDetails {
-		return m.renderDetailsView()
-	}
-
+	// 组装主视图的各个部分：头部、内容区、底部。
 	header := m.renderHeader()
 	footer := m.renderFooter()
 
+	// 如果过滤后没有任何结果，显示一个提示信息。
 	if len(m.filtered) == 0 {
 		noResults := "  No results..."
 		return docStyle.Render(lipgloss.JoinVertical(lipgloss.Left, header, noResults, footer))
 	}
 
+	// 渲染主内容区，它由左侧的进程面板和右侧的端口面板水平拼接而成。
 	processPane := m.renderProcessPane()
 	portPane := m.renderPortPane()
-
 	mainContent := lipgloss.JoinHorizontal(lipgloss.Top, processPane, portPane)
 
+	// 将所有部分垂直拼接，并应用最外层的文档样式，最终返回完整的UI字符串。
 	return docStyle.Render(lipgloss.JoinVertical(lipgloss.Left, header, mainContent, footer))
 }
 
@@ -127,20 +117,23 @@ func (m model) View() string {
 // `View` 函数会调用这些辅助函数来构建UI的不同部分。
 
 // renderDetailsView 负责渲染单个进程的详细信息视图。
+// 这是一个全屏的覆盖视图。
 func (m model) renderDetailsView() string {
 	title := detailTitleStyle.Render("Process Details")
 	var pane string
+	// 当详情数据尚未加载完成时，显示一个加载提示。
 	if m.processDetails == "" {
 		pane = detailPaneStyle.Render(faintStyle.Render("Collecting details..."))
 	} else {
+		// 加载完成后，使用 `formatProcessDetails` 格式化并渲染详情内容。
 		pane = detailPaneStyle.Render(formatProcessDetails(m.processDetails))
 	}
-	help := detailHelpStyle.Render(" esc: back to list")
+	help := detailHelpStyle.Render(" esc/i/q: back to list")
 	content := lipgloss.JoinVertical(lipgloss.Left, title, pane, help)
 	return docStyle.Render(content)
 }
 
-// renderHeader 负责渲染应用的头部区域，主要包括搜索框和进程计数。
+// renderHeader 负责渲染应用的头部区域，通常包括标题、状态信息和搜索框。
 func (m model) renderHeader() string {
 	var warnings string
 	if len(m.warnings) > 0 {
@@ -156,20 +149,20 @@ func (m model) renderHeader() string {
 	return fmt.Sprintf("Search processes/ports %s%s%s: %s", faintStyle.Render(count), warnings, mode, m.textInput.View())
 }
 
-// renderFooter 负责渲染应用的底部区域，主要是根据当前状态显示不同的帮助信息。
+// renderFooter 负责渲染应用的底部区域，通常用于显示上下文相关的帮助信息。
 func (m model) renderFooter() string {
 	var help strings.Builder
+	// 根据搜索框是否激活，显示不同的提示。
 	if m.textInput.Focused() {
-		// 当搜索框激活时，显示退出搜索的提示。
 		help.WriteString(faintStyle.Render(" enter/esc to exit search"))
 	} else {
-		// 精简主界面帮助，更多按 ? 查看
-		help.WriteString(faintStyle.Render(" ?: help • / search • P ports • ctrl+r refresh • i info • enter kill • p pause • r resume • q quit"))
+		// 在非搜索状态下，显示一个精简的核心操作指南。
+		help.WriteString(faintStyle.Render("?: help • /: search • P: ports • T: tree • i: info • enter: kill • p: pause • r: resume • q: quit"))
 	}
 	return help.String()
 }
 
-// renderDependencyView 渲染全屏依赖树模式。
+// renderDependencyView 负责渲染全屏的依赖树视图。
 func (m model) renderDependencyView() string {
 	root := m.findProcess(m.dep.rootPID)
 	if root == nil {
@@ -184,9 +177,10 @@ func (m model) renderDependencyView() string {
 		anc = m.buildAncestorLines(root)
 	}
 
+	// 1. 构建并过滤扁平化的依赖树行列表。
 	lines := applyDepFilters(m, buildDepLines(m))
 
-	// 视口计算，围绕光标
+	// 2. 计算视口，使其始终以当前光标为中心。
 	start := m.dep.cursor - dependencyViewHeight/2
 	if start < 0 {
 		start = 0
@@ -194,15 +188,15 @@ func (m model) renderDependencyView() string {
 	end := start + dependencyViewHeight
 	if end > len(lines) {
 		end = len(lines)
-		start = end - dependencyViewHeight
-		if start < 0 {
-			start = 0
-		}
+		start = max(0, end-dependencyViewHeight)
 	}
 
+	// 3. 使用 strings.Builder 高效地构建视图字符串。
 	var b strings.Builder
 	title := detailTitleStyle.Render(fmt.Sprintf("Dependency Tree: %s (%d)", root.Executable, root.Pid))
 	fmt.Fprintln(&b, title)
+
+	// 4. 如果需要，渲染祖先链。
 	if len(anc) > 0 {
 		fmt.Fprintln(&b, faintStyle.Render("Ancestors"))
 		for _, l := range anc {
@@ -211,58 +205,55 @@ func (m model) renderDependencyView() string {
 		fmt.Fprintln(&b, "")
 	}
 
+	// 5. 遍历视口内的每一行并进行渲染。
 	childrenMap := m.buildChildrenMap()
 	for i := start; i < end; i++ {
 		ln := lines[i]
 		lineText := ln.text
 		if it := m.findProcess(ln.pid); it != nil {
-			// Determine if this node has undisplayed dependencies
+			// 检查是否存在未显示的子节点（因为深度限制或折叠），并据此添加一个 "+" 标记。
 			hasKids := len(childrenMap[ln.pid]) > 0
 			st := m.dep.expanded[ln.pid]
 			allowDepth := dependencyTreeDepth - 1 + st.depthExtend
 			hiddenDeps := hasKids && (!st.expanded || ln.depth >= allowDepth)
-			// apply status color
+
+			// 应用进程状态样式。
 			switch it.Status {
 			case process.Killed:
 				lineText = killingStyle.Render(lineText)
 			case process.Paused:
 				lineText = pausedStyle.Render(lineText)
 			}
-			// append a subtle marker when there are hidden deps
 			if hiddenDeps {
-				lineText = lineText + faintStyle.Render(" +")
-			}
-			if i == m.dep.cursor {
-				sel := selectedStyle
-				if hiddenDeps {
-					// add a faint hint inside selection too
-					fmt.Fprintln(&b, sel.Render("❯ "+ln.text+faintStyle.Render(" +")))
-				} else {
-					fmt.Fprintln(&b, sel.Render("❯ "+ln.text))
-				}
-				continue
+				lineText += faintStyle.Render(" +")
 			}
 		}
+
+		// 高亮显示当前光标所在的行。
 		if i == m.dep.cursor {
-			fmt.Fprintln(&b, selectedStyle.Render("❯ "+ln.text))
+			fmt.Fprintln(&b, selectedStyle.Render("❯ "+lineText))
 		} else {
 			fmt.Fprintln(&b, "  "+lineText)
 		}
 	}
 
-	// Filter status line
-	filterBadge := ""
+	// 6. 构建并渲染底部的状态/帮助栏。
+	var filterBadges []string
 	if m.textInput.Value() != "" {
-		filterBadge = fmt.Sprintf(" [filter: %q]", m.textInput.Value())
+		filterBadges = append(filterBadges, fmt.Sprintf("filter: %q", m.textInput.Value()))
 	}
 	if m.dep.aliveOnly {
-		filterBadge += " [alive-only]"
+		filterBadges = append(filterBadges, "alive-only")
 	}
 	if m.dep.portsOnly {
-		filterBadge += " [listening-only]"
+		filterBadges = append(filterBadges, "listening-only")
+	}
+	filterStatus := ""
+	if len(filterBadges) > 0 {
+		filterStatus = faintStyle.Render(" [" + strings.Join(filterBadges, ", ") + "]")
 	}
 
-	help := faintStyle.Render(" ?: help • / filter • S alive • L listen • ←/→/space fold • enter/o root • u up • esc back • i details" + filterBadge)
+	help := faintStyle.Render("esc: back • /: filter • a: ancestors • s: alive • l: listen • u: up • enter/o: root • i: info" + filterStatus)
 	fmt.Fprintln(&b, "")
 	fmt.Fprintln(&b, help)
 	return docStyle.Render(strings.TrimRight(b.String(), "\n"))
@@ -400,25 +391,28 @@ func (m model) renderHelpView() string {
 	return docStyle.Render(strings.TrimRight(b.String(), "\n"))
 }
 
-// formatProcessDetails 将 GetProcessDetails 返回的原始字符串美化为带标签对齐的视图。
+// formatProcessDetails 是一个辅助函数，它接收 `GetProcessDetails` 返回的原始详情字符串，
+// 并将其解析、格式化为一个美观的、带标签对齐的视图。
 func formatProcessDetails(details string) string {
 	lines := strings.Split(strings.TrimSpace(details), "\n")
 	if len(lines) == 0 {
 		return faintStyle.Render("(no details)")
 	}
 
-	rows := make([]string, 0, len(lines))
+	var rows []string
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
 		if line == "" {
-			rows = append(rows, "")
+			rows = append(rows, "") // 保留空行以维持格式。
 			continue
 		}
+		// 将 "Key: Value" 格式的行分割开。
 		label, value := splitDetailLine(line)
 		if label == "" {
 			rows = append(rows, detailValueStyle.Render(value))
 			continue
 		}
+		// 使用 lipgloss 样式分别渲染标签和值，然后水平拼接它们。
 		labelCell := detailLabelStyle.Render(label + ":")
 		valueCell := detailValueStyle.Render(value)
 		rows = append(rows, lipgloss.JoinHorizontal(lipgloss.Top, labelCell, " ", valueCell))
@@ -427,6 +421,8 @@ func formatProcessDetails(details string) string {
 	return strings.Join(rows, "\n")
 }
 
+// splitDetailLine 是一个健壮的辅助函数，用于将详情行分割为标签和值。
+// 它能处理 ":\t" 和 ":" 两种分隔符。
 func splitDetailLine(line string) (string, string) {
 	if idx := strings.Index(line, ":\t"); idx != -1 {
 		return strings.TrimSpace(line[:idx]), strings.TrimSpace(line[idx+2:])
@@ -437,7 +433,8 @@ func splitDetailLine(line string) (string, string) {
 	return "", line
 }
 
-// friendlyErrorMessage 为常见错误提供更直观的提示，同时保留原始信息。
+// friendlyErrorMessage 函数接收一个原始的 `error`，并尝试将其转换为一个对用户更友好的消息。
+// 它通过匹配错误字符串中的常见模式（如权限问题、进程不存在等），来附加一些有用的提示信息。
 func friendlyErrorMessage(err error) string {
 	if err == nil {
 		return "(n/a)"
@@ -448,70 +445,12 @@ func friendlyErrorMessage(err error) string {
 
 	switch {
 	case strings.Contains(lower, "operation not permitted") || strings.Contains(lower, "permission denied"):
-		return fmt.Sprintf("%s\n\nHint: try running gokill with sudo or target processes owned by your user.", raw)
+		return fmt.Sprintf("%s\n\nHint: Try running gokill with sudo or as an administrator.", raw)
 	case strings.Contains(lower, "not found") || strings.Contains(lower, "no such process"):
-		return fmt.Sprintf("%s\n\nHint: the process may have already exited. Refresh (ctrl+r) and try again.", raw)
+		return fmt.Sprintf("%s\n\nHint: The process may have already exited. Try refreshing (ctrl+r).", raw)
 	case strings.Contains(lower, "already finished"):
-		return fmt.Sprintf("%s\n\nHint: that PID exited just before the signal arrived. Refresh the list.", raw)
+		return fmt.Sprintf("%s\n\nHint: The process exited just before the signal arrived. Refresh the list.", raw)
 	default:
 		return raw
-	}
-}
-
-// renderDependencyTree 根据当前选中的进程构建一个类似 tree 的依赖结构。
-func (m model) renderDependencyTree(root *process.Item) string {
-	if root == nil || len(m.processes) == 0 {
-		return ""
-	}
-
-	children := make(map[int32][]*process.Item)
-	for _, it := range m.processes {
-		children[it.PPid] = append(children[it.PPid], it)
-	}
-
-	var b strings.Builder
-	fmt.Fprintf(&b, "%s (%d)\n", root.Executable, root.Pid)
-	renderDependencyChildren(&b, children, root.Pid, "", 0)
-
-	return strings.TrimRight(b.String(), "\n")
-}
-
-func renderDependencyChildren(b *strings.Builder, children map[int32][]*process.Item, pid int32, prefix string, depth int) {
-	if depth >= dependencyTreeDepth-1 {
-		return
-	}
-
-	kids := children[pid]
-	if len(kids) == 0 {
-		return
-	}
-
-	sort.Slice(kids, func(i, j int) bool {
-		if kids[i].Executable == kids[j].Executable {
-			return kids[i].Pid < kids[j].Pid
-		}
-		return kids[i].Executable < kids[j].Executable
-	})
-
-	truncated := 0
-	if len(kids) > dependencyTreeChildLimit {
-		truncated = len(kids) - dependencyTreeChildLimit
-		kids = kids[:dependencyTreeChildLimit]
-	}
-
-	for i, child := range kids {
-		last := i == len(kids)-1 && truncated == 0
-		fmt.Fprintf(b, "%s%s %s (%d)\n", prefix, branchSymbol(last), child.Executable, child.Pid)
-		nextPrefix := prefix
-		if last {
-			nextPrefix += "   "
-		} else {
-			nextPrefix += "│  "
-		}
-		renderDependencyChildren(b, children, child.Pid, nextPrefix, depth+1)
-	}
-
-	if truncated > 0 {
-		fmt.Fprintf(b, "%s└─ ... (%d more)\n", prefix, truncated)
 	}
 }
