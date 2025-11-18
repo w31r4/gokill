@@ -205,8 +205,8 @@ func (m model) renderDependencyView() string {
 		fmt.Fprintln(&b, "")
 	}
 
-	// 5. 遍历视口内的每一行并进行渲染。
-	childrenMap := m.buildChildrenMap()
+	// 5. 使用预计算的 childrenMap，避免每次渲染时重复构建。
+	childrenMap := m.childrenMap
 	for i := start; i < end; i++ {
 		ln := lines[i]
 		lineText := ln.text

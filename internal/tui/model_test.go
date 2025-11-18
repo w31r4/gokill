@@ -39,6 +39,13 @@ func TestTModeEnterFromMainList(t *testing.T) {
 		{Pid: 2, PPid: 1, Executable: "child", User: "test", Status: process.Alive},
 	}
 	m.filtered = m.processes
+	// 初始化预计算的映射表
+	m.pidMap = make(map[int32]*process.Item)
+	m.childrenMap = make(map[int32][]*process.Item)
+	for _, p := range m.processes {
+		m.pidMap[p.Pid] = p
+		m.childrenMap[p.PPid] = append(m.childrenMap[p.PPid], p)
+	}
 	m.cursor = 1 // select the second item as root
 
 	newModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'T'}})
@@ -75,6 +82,13 @@ func TestTModeNavigationAndExit(t *testing.T) {
 		{Pid: 2, PPid: 1, Executable: "child", User: "test", Status: process.Alive},
 	}
 	m.filtered = m.processes
+	// 初始化预计算的映射表，确保T模式导航正常工作
+	m.pidMap = make(map[int32]*process.Item)
+	m.childrenMap = make(map[int32][]*process.Item)
+	for _, p := range m.processes {
+		m.pidMap[p.Pid] = p
+		m.childrenMap[p.PPid] = append(m.childrenMap[p.PPid], p)
+	}
 	m.cursor = 0
 
 	// Enter T-mode with the root process selected.
