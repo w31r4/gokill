@@ -32,6 +32,79 @@ func TestUpdate(t *testing.T) {
 	}
 }
 
+func TestTModeEnterFromMainList(t *testing.T) {
+	m := InitialModel("")
+	m.processes = []*process.Item{
+		{Pid: 1, PPid: 0, Executable: "root", User: "test", Status: process.Alive},
+		{Pid: 2, PPid: 1, Executable: "child", User: "test", Status: process.Alive},
+	}
+	m.filtered = m.processes
+	m.cursor = 1 // select the second item as root
+
+	newModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'T'}})
+	m = newModel.(model)
+
+	if !m.depMode {
+		t.Fatalf("expected depMode to be true after pressing T")
+	}
+	if m.depRootPID != 2 {
+		t.Fatalf("expected depRootPID to be 2, got %d", m.depRootPID)
+	}
+	if m.depCursor != 0 {
+		t.Fatalf("expected depCursor to start at 0, got %d", m.depCursor)
+	}
+	if m.depExpanded == nil {
+		t.Fatalf("expected depExpanded to be initialized")
+	}
+	if st, ok := m.depExpanded[2]; !ok {
+		t.Fatalf("expected depExpanded to contain root pid 2")
+	} else {
+		if !st.expanded {
+			t.Errorf("expected root node to be expanded in depExpanded")
+		}
+		if st.page != 1 {
+			t.Errorf("expected root node page to be 1, got %d", st.page)
+		}
+	}
+}
+
+func TestTModeNavigationAndExit(t *testing.T) {
+	m := InitialModel("")
+	m.processes = []*process.Item{
+		{Pid: 1, PPid: 0, Executable: "root", User: "test", Status: process.Alive},
+		{Pid: 2, PPid: 1, Executable: "child", User: "test", Status: process.Alive},
+	}
+	m.filtered = m.processes
+	m.cursor = 0
+
+	// Enter T-mode with the root process selected.
+	newModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'T'}})
+	m = newModel.(model)
+	if !m.depMode {
+		t.Fatalf("expected depMode to be true after pressing T")
+	}
+
+	// Move the dependency cursor down.
+	newModel, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	m = newModel.(model)
+	if m.depCursor == 0 {
+		t.Errorf("expected depCursor to move down from 0")
+	}
+
+	// Exit T-mode with ESC.
+	newModel, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = newModel.(model)
+	if m.depMode {
+		t.Errorf("expected depMode to be false after pressing esc")
+	}
+	if m.depExpanded != nil && len(m.depExpanded) != 0 {
+		t.Errorf("expected depExpanded to be cleared after exiting T-mode")
+	}
+	if m.depCursor != 0 {
+		t.Errorf("expected depCursor to reset to 0 after exiting T-mode, got %d", m.depCursor)
+	}
+}
+
 func TestFilterProcesses(t *testing.T) {
 	m := model{
 		processes: []*process.Item{
