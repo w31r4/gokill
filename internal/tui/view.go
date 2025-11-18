@@ -95,7 +95,7 @@ func (m model) View() string {
 	}
 
 	// Dependency full-screen mode.
-	if m.depMode {
+	if m.dep.mode {
 		return m.renderDependencyView()
 	}
 
@@ -171,7 +171,7 @@ func (m model) renderFooter() string {
 
 // renderDependencyView 渲染全屏依赖树模式。
 func (m model) renderDependencyView() string {
-	root := m.findProcess(m.depRootPID)
+	root := m.findProcess(m.dep.rootPID)
 	if root == nil {
 		title := detailTitleStyle.Render("Dependency Tree")
 		hint := faintStyle.Render("(root process not found; esc to return)")
@@ -180,14 +180,14 @@ func (m model) renderDependencyView() string {
 
 	// Ancestor chain (optional)
 	var anc []string
-	if m.depShowAncestors {
+	if m.dep.showAncestors {
 		anc = m.buildAncestorLines(root)
 	}
 
 	lines := applyDepFilters(m, buildDepLines(m))
 
 	// 视口计算，围绕光标
-	start := m.depCursor - dependencyViewHeight/2
+	start := m.dep.cursor - dependencyViewHeight/2
 	if start < 0 {
 		start = 0
 	}
@@ -218,7 +218,7 @@ func (m model) renderDependencyView() string {
 		if it := m.findProcess(ln.pid); it != nil {
 			// Determine if this node has undisplayed dependencies
 			hasKids := len(childrenMap[ln.pid]) > 0
-			st := m.depExpanded[ln.pid]
+			st := m.dep.expanded[ln.pid]
 			allowDepth := dependencyTreeDepth - 1 + st.depthExtend
 			hiddenDeps := hasKids && (!st.expanded || ln.depth >= allowDepth)
 			// apply status color
@@ -232,7 +232,7 @@ func (m model) renderDependencyView() string {
 			if hiddenDeps {
 				lineText = lineText + faintStyle.Render(" +")
 			}
-			if i == m.depCursor {
+			if i == m.dep.cursor {
 				sel := selectedStyle
 				if hiddenDeps {
 					// add a faint hint inside selection too
@@ -243,7 +243,7 @@ func (m model) renderDependencyView() string {
 				continue
 			}
 		}
-		if i == m.depCursor {
+		if i == m.dep.cursor {
 			fmt.Fprintln(&b, selectedStyle.Render("❯ "+ln.text))
 		} else {
 			fmt.Fprintln(&b, "  "+lineText)
@@ -255,10 +255,10 @@ func (m model) renderDependencyView() string {
 	if m.textInput.Value() != "" {
 		filterBadge = fmt.Sprintf(" [filter: %q]", m.textInput.Value())
 	}
-	if m.depAliveOnly {
+	if m.dep.aliveOnly {
 		filterBadge += " [alive-only]"
 	}
-	if m.depPortsOnly {
+	if m.dep.portsOnly {
 		filterBadge += " [listening-only]"
 	}
 
@@ -378,7 +378,7 @@ func (m model) renderHelpView() string {
 	var b strings.Builder
 	title := helpTitleStyle.Render("Help / Commands")
 	fmt.Fprintln(&b, title)
-	if m.depMode {
+	if m.dep.mode {
 		fmt.Fprintln(&b, helpPaneStyle.Render(strings.Join([]string{
 			"T-mode (dependency tree):",
 			"  up/down (j/k): move cursor",

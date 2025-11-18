@@ -44,19 +44,19 @@ func TestTModeEnterFromMainList(t *testing.T) {
 	newModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'T'}})
 	m = newModel.(model)
 
-	if !m.depMode {
+	if !m.dep.mode {
 		t.Fatalf("expected depMode to be true after pressing T")
 	}
-	if m.depRootPID != 2 {
-		t.Fatalf("expected depRootPID to be 2, got %d", m.depRootPID)
+	if m.dep.rootPID != 2 {
+		t.Fatalf("expected depRootPID to be 2, got %d", m.dep.rootPID)
 	}
-	if m.depCursor != 0 {
-		t.Fatalf("expected depCursor to start at 0, got %d", m.depCursor)
+	if m.dep.cursor != 0 {
+		t.Fatalf("expected depCursor to start at 0, got %d", m.dep.cursor)
 	}
-	if m.depExpanded == nil {
+	if m.dep.expanded == nil {
 		t.Fatalf("expected depExpanded to be initialized")
 	}
-	if st, ok := m.depExpanded[2]; !ok {
+	if st, ok := m.dep.expanded[2]; !ok {
 		t.Fatalf("expected depExpanded to contain root pid 2")
 	} else {
 		if !st.expanded {
@@ -80,28 +80,28 @@ func TestTModeNavigationAndExit(t *testing.T) {
 	// Enter T-mode with the root process selected.
 	newModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'T'}})
 	m = newModel.(model)
-	if !m.depMode {
+	if !m.dep.mode {
 		t.Fatalf("expected depMode to be true after pressing T")
 	}
 
 	// Move the dependency cursor down.
 	newModel, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
 	m = newModel.(model)
-	if m.depCursor == 0 {
+	if m.dep.cursor == 0 {
 		t.Errorf("expected depCursor to move down from 0")
 	}
 
 	// Exit T-mode with ESC.
 	newModel, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
 	m = newModel.(model)
-	if m.depMode {
+	if m.dep.mode {
 		t.Errorf("expected depMode to be false after pressing esc")
 	}
-	if m.depExpanded != nil && len(m.depExpanded) != 0 {
+	if m.dep.expanded != nil && len(m.dep.expanded) != 0 {
 		t.Errorf("expected depExpanded to be cleared after exiting T-mode")
 	}
-	if m.depCursor != 0 {
-		t.Errorf("expected depCursor to reset to 0 after exiting T-mode, got %d", m.depCursor)
+	if m.dep.cursor != 0 {
+		t.Errorf("expected depCursor to reset to 0 after exiting T-mode, got %d", m.dep.cursor)
 	}
 }
 

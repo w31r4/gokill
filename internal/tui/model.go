@@ -61,18 +61,10 @@ type model struct {
 	portsOnly bool
 
 	// --- Dependency (T) mode state ---
-	depMode          bool
-	depRootPID       int32
-	depExpanded      map[int32]depNodeState
-	depCursor        int
-	depShowAncestors bool
+	dep depViewState
 
 	// --- Confirm overlay ---
 	confirm *confirmPrompt
-
-	// Phase 4: filter and toggles for T-mode
-	depAliveOnly bool
-	depPortsOnly bool
 
 	// help overlay
 	helpOpen bool

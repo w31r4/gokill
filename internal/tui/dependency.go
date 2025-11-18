@@ -16,6 +16,17 @@ const (
 	ancestorChainLimit       = 6
 )
 
+// depViewState 聚合 T 模式的视图状态，避免在主 model 上散落多个字段。
+type depViewState struct {
+	mode          bool
+	rootPID       int32
+	expanded      map[int32]depNodeState
+	cursor        int
+	showAncestors bool
+	aliveOnly     bool
+	portsOnly     bool
+}
+
 // depNodeState 记录依赖树中每个节点的展开状态、分页进度以及额外深度扩展。
 type depNodeState struct {
 	expanded    bool
@@ -35,7 +46,7 @@ type depLine struct {
 
 // buildDepLines 将当前依赖树按展开/分页状态扁平化为行。
 func buildDepLines(m model) []depLine {
-	root := m.findProcess(m.depRootPID)
+	root := m.findProcess(m.dep.rootPID)
 	if root == nil {
 		return nil
 	}
@@ -62,8 +73,8 @@ func buildDepLines(m model) []depLine {
 		})
 
 		// 展开状态与分页
-		st := m.depExpanded[pid]
-		if !st.expanded && pid != m.depRootPID {
+		st := m.dep.expanded[pid]
+		if !st.expanded && pid != m.dep.rootPID {
 			return
 		}
 		page := st.page
@@ -91,7 +102,7 @@ func buildDepLines(m model) []depLine {
 			}
 
 			// allow per-parent deeper expansion beyond global depth
-			allowed := dependencyTreeDepth - 1 + m.depExpanded[pid].depthExtend
+			allowed := dependencyTreeDepth - 1 + m.dep.expanded[pid].depthExtend
 			if depth < allowed {
 				walk(child.Pid, nextPrefix, depth+1)
 			} else if len(childrenMap[child.Pid]) > 0 {
@@ -111,8 +122,8 @@ func buildDepLines(m model) []depLine {
 	}
 
 	// 根默认展开
-	if st, ok := m.depExpanded[root.Pid]; !ok || !st.expanded {
-		m.depExpanded[root.Pid] = depNodeState{expanded: true, page: 1}
+	if st, ok := m.dep.expanded[root.Pid]; !ok || !st.expanded {
+		m.dep.expanded[root.Pid] = depNodeState{expanded: true, page: 1}
 	}
 	walk(root.Pid, "", 0)
 	return lines
@@ -141,10 +152,10 @@ func applyDepFilters(m model, lines []depLine) []depLine {
 		if it == nil {
 			continue
 		}
-		if m.depAliveOnly && it.Status != process.Alive {
+		if m.dep.aliveOnly && it.Status != process.Alive {
 			continue
 		}
-		if m.depPortsOnly && len(it.Ports) == 0 {
+		if m.dep.portsOnly && len(it.Ports) == 0 {
 			continue
 		}
 		if hasTerm {
@@ -219,4 +230,3 @@ func branchSymbol(last bool) string {
 	}
 	return "├─"
 }
-
