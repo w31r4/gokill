@@ -59,8 +59,6 @@ func getProcessDetails(pid int) tea.Cmd {
 // 它接收一个消息 `tea.Msg` 作为参数，返回更新后的模型 `tea.Model` 和一个可选的、需要执行的新命令 `tea.Cmd`。
 // 这是整个应用逻辑的“状态机”。
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	var cmd tea.Cmd
-
 	switch msg := msg.(type) {
 	// 1. 处理异步获取到的进程列表
 	// 1. Handle the arrival of the process list and any associated warnings.
@@ -102,378 +100,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// 4. 处理用户按键输入
 	case tea.KeyMsg:
-		// Help overlay handling
-		if m.helpOpen {
-			switch msg.String() {
-			case "?", "esc":
-				m.helpOpen = false
-				return m, nil
-			case "ctrl+c", "q":
-				return m, tea.Quit
-			}
-			return m, nil
-		}
-		// Confirm overlay handling takes precedence (except errors already handled above).
-		if m.confirm != nil {
-			switch msg.String() {
-			case "y", "enter":
-				op := *m.confirm
-				m.confirm = nil
-				return m, sendSignalWithStatus(int(op.pid), op.sig, op.status)
-			case "n", "esc":
-				m.confirm = nil
-				return m, nil
-			case "ctrl+c", "q":
-				return m, tea.Quit
-			}
-			return m, nil
-		}
-
-		// Dependency mode (T) takes precedence over other interactive states except errors and confirm.
-		if m.depMode {
-			// When in T-mode and search is focused, update input first.
-			if m.textInput.Focused() {
-				switch msg.String() {
-				case "enter", "esc":
-					m.textInput.Blur()
-				}
-				m.textInput, cmd = m.textInput.Update(msg)
-				// keep cursor clamped to filtered lines
-				if c := len(applyDepFilters(m, buildDepLines(m))); m.depCursor >= c {
-					if c > 0 {
-						m.depCursor = c - 1
-					} else {
-						m.depCursor = 0
-					}
-				}
-				return m, cmd
-			}
-			switch msg.String() {
-			case "esc":
-				m.depMode = false
-				m.depExpanded = nil
-				m.depCursor = 0
-				return m, nil
-			case "ctrl+c", "q":
-				return m, tea.Quit
-			case "ctrl+r":
-				return m, getProcesses
-			case "/":
-				m.textInput.Focus()
-				return m, nil
-			case "?":
-				m.helpOpen = true
-				return m, nil
-			case "S":
-				m.depAliveOnly = !m.depAliveOnly
-				if c := len(applyDepFilters(m, buildDepLines(m))); m.depCursor >= c {
-					if c > 0 {
-						m.depCursor = c - 1
-					} else {
-						m.depCursor = 0
-					}
-				}
-				return m, nil
-			case "L":
-				m.depPortsOnly = !m.depPortsOnly
-				if c := len(applyDepFilters(m, buildDepLines(m))); m.depCursor >= c {
-					if c > 0 {
-						m.depCursor = c - 1
-					} else {
-						m.depCursor = 0
-					}
-				}
-				return m, nil
-			case "up", "k":
-				if m.depCursor > 0 {
-					m.depCursor--
-				}
-				return m, nil
-			case "down", "j":
-				if m.depCursor < len(buildDepLines(m))-1 {
-					m.depCursor++
-				}
-				return m, nil
-			case "left", "h":
-				lines := buildDepLines(m)
-				if len(lines) == 0 {
-					return m, nil
-				}
-				ln := lines[m.depCursor]
-				if ln.isMore {
-					// collapse parent and reset deeper/page state
-					st := m.depExpanded[ln.parent]
-					st.expanded = false
-					st.page = 1
-					st.depthExtend = 0
-					m.depExpanded[ln.parent] = st
-				} else if ln.pid != 0 {
-					st := m.depExpanded[ln.pid]
-					st.expanded = false
-					if st.page == 0 {
-						st.page = 1
-					}
-					m.depExpanded[ln.pid] = st
-				}
-				if m.depCursor >= len(buildDepLines(m)) {
-					if c := len(buildDepLines(m)); c > 0 {
-						m.depCursor = c - 1
-					} else {
-						m.depCursor = 0
-					}
-				}
-				return m, nil
-			case "right", "l":
-				lines := buildDepLines(m)
-				if len(lines) == 0 {
-					return m, nil
-				}
-				ln := lines[m.depCursor]
-				if ln.isMore {
-					st := m.depExpanded[ln.parent]
-					if ln.isDeeper {
-						st.depthExtend++
-						st.expanded = true
-					} else {
-						if st.page == 0 {
-							st.page = 1
-						}
-						st.page++
-						st.expanded = true
-					}
-					m.depExpanded[ln.parent] = st
-				} else if ln.pid != 0 {
-					st := m.depExpanded[ln.pid]
-					if st.page == 0 {
-						st.page = 1
-					}
-					st.expanded = true
-					m.depExpanded[ln.pid] = st
-				}
-				if m.depCursor >= len(buildDepLines(m)) {
-					if c := len(buildDepLines(m)); c > 0 {
-						m.depCursor = c - 1
-					} else {
-						m.depCursor = 0
-					}
-				}
-				return m, nil
-			case " ":
-				lines := buildDepLines(m)
-				if len(lines) == 0 {
-					return m, nil
-				}
-				ln := lines[m.depCursor]
-				if ln.isMore {
-					st := m.depExpanded[ln.parent]
-					if ln.isDeeper {
-						st.depthExtend++
-						st.expanded = true
-					} else {
-						if st.page == 0 {
-							st.page = 1
-						}
-						st.page++
-						st.expanded = true
-					}
-					m.depExpanded[ln.parent] = st
-				} else if ln.pid != 0 {
-					st := m.depExpanded[ln.pid]
-					if st.page == 0 {
-						st.page = 1
-					}
-					st.expanded = !st.expanded
-					if st.page == 0 {
-						st.page = 1
-					}
-					m.depExpanded[ln.pid] = st
-				}
-				if m.depCursor >= len(buildDepLines(m)) {
-					if c := len(buildDepLines(m)); c > 0 {
-						m.depCursor = c - 1
-					} else {
-						m.depCursor = 0
-					}
-				}
-				return m, nil
-			case "enter", "o":
-				lines := buildDepLines(m)
-				if len(lines) == 0 {
-					return m, nil
-				}
-				ln := lines[m.depCursor]
-				if ln.pid != 0 {
-					m.depRootPID = ln.pid
-					if m.depExpanded == nil {
-						m.depExpanded = make(map[int32]depNodeState)
-					}
-					m.depExpanded = map[int32]depNodeState{ln.pid: {expanded: true, page: 1}}
-					m.depCursor = 0
-				}
-				return m, nil
-			case "u":
-				if root := m.findProcess(m.depRootPID); root != nil {
-					if parent := m.findProcess(root.PPid); parent != nil {
-						m.depRootPID = parent.Pid
-						if m.depExpanded == nil {
-							m.depExpanded = make(map[int32]depNodeState)
-						}
-						m.depExpanded = map[int32]depNodeState{parent.Pid: {expanded: true, page: 1}}
-						m.depCursor = 0
-					}
-				}
-				return m, nil
-			case "a":
-				m.depShowAncestors = !m.depShowAncestors
-				return m, nil
-			case "i":
-				lines := buildDepLines(m)
-				if len(lines) == 0 {
-					return m, nil
-				}
-				ln := lines[m.depCursor]
-				if ln.pid != 0 {
-					m.showDetails = true
-					m.processDetails = ""
-					return m, getProcessDetails(int(ln.pid))
-				}
-				return m, nil
-			case "x":
-				lines := buildDepLines(m)
-				if len(lines) == 0 {
-					return m, nil
-				}
-				ln := lines[m.depCursor]
-				if ln.pid != 0 {
-					if it := m.findProcess(ln.pid); it != nil {
-						m.confirm = &confirmPrompt{pid: ln.pid, name: it.Executable, op: "kill", sig: syscall.SIGTERM, status: process.Killed}
-					}
-				}
-				return m, nil
-			case "p":
-				lines := buildDepLines(m)
-				if len(lines) == 0 {
-					return m, nil
-				}
-				ln := lines[m.depCursor]
-				if ln.pid != 0 {
-					if it := m.findProcess(ln.pid); it != nil {
-						m.confirm = &confirmPrompt{pid: ln.pid, name: it.Executable, op: "pause", sig: syscall.SIGSTOP, status: process.Paused}
-					}
-				}
-				return m, nil
-			case "r":
-				lines := buildDepLines(m)
-				if len(lines) == 0 {
-					return m, nil
-				}
-				ln := lines[m.depCursor]
-				if ln.pid != 0 {
-					if it := m.findProcess(ln.pid); it != nil && it.Status == process.Paused {
-						m.confirm = &confirmPrompt{pid: ln.pid, name: it.Executable, op: "resume", sig: syscall.SIGCONT, status: process.Alive}
-					}
-				}
-				return m, nil
-			}
-		}
-		if m.err != nil {
-			switch msg.String() {
-			case "esc":
-				m.err = nil
-			case "ctrl+c", "q":
-				return m, tea.Quit
-			}
-			return m, nil
-		}
-
-		if m.showDetails {
-			switch msg.String() {
-			case "esc":
-				m.showDetails = false
-				m.processDetails = "" // Clear details
-			}
-			return m, nil
-		}
-
-		if m.textInput.Focused() {
-			switch msg.String() {
-			case "enter", "esc":
-				m.textInput.Blur()
-			}
-			m.textInput, cmd = m.textInput.Update(msg)
-			m.filtered = m.filterProcesses(m.textInput.Value())
-			return m, cmd
-		}
-
-		switch msg.String() {
-		case "ctrl+c", "q":
-			return m, tea.Quit
-		case "ctrl+r":
-			return m, getProcesses
-		case "?":
-			m.helpOpen = true
-			return m, nil
-		case "/":
-			m.textInput.Focus()
-			return m, nil
-		case "esc":
-			// ESC 退出模式：此处用于退出 ports-only 视图
-			if m.portsOnly {
-				m.portsOnly = false
-				m.filtered = m.filterProcesses(m.textInput.Value())
-				return m, nil
-			}
-		case "P":
-			// 进入“仅显示占用端口的进程”模式；退出由 ESC 统一处理
-			if !m.portsOnly {
-				m.portsOnly = true
-				m.filtered = m.filterProcesses(m.textInput.Value())
-			}
-			return m, nil
-		case "T":
-			if len(m.filtered) > 0 {
-				p := m.filtered[m.cursor]
-				m.depMode = true
-				m.depRootPID = p.Pid
-				if m.depExpanded == nil {
-					m.depExpanded = make(map[int32]depNodeState)
-				}
-				m.depExpanded[p.Pid] = depNodeState{expanded: true, page: 1}
-				m.depCursor = 0
-			}
-			return m, nil
-		case "up", "k":
-			if m.cursor > 0 {
-				m.cursor--
-			}
-		case "down", "j":
-			if m.cursor < len(m.filtered)-1 {
-				m.cursor++
-			}
-		case "enter":
-			if len(m.filtered) > 0 {
-				p := m.filtered[m.cursor]
-				return m, sendSignalWithStatus(int(p.Pid), syscall.SIGTERM, process.Killed)
-			}
-		case "p":
-			if len(m.filtered) > 0 {
-				p := m.filtered[m.cursor]
-				return m, sendSignalWithStatus(int(p.Pid), syscall.SIGSTOP, process.Paused)
-			}
-		case "r":
-			if len(m.filtered) > 0 {
-				p := m.filtered[m.cursor]
-				if p.Status == process.Paused {
-					return m, sendSignalWithStatus(int(p.Pid), syscall.SIGCONT, process.Alive)
-				}
-			}
-		case "i":
-			if len(m.filtered) > 0 {
-				m.showDetails = true
-				m.processDetails = ""
-				p := m.filtered[m.cursor]
-				return m, getProcessDetails(int(p.Pid))
-			}
+		newModel, keyCmd, handled := m.updateKeyMsg(msg)
+		if handled {
+			return newModel, keyCmd
 		}
 	}
 
@@ -492,7 +121,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 
-	return m, tea.Batch(cmd, filterCmd)
+	return m, filterCmd
 }
 
 // sendSignal 是一个命令工厂函数，用于创建一个向指定PID进程发送信号的命令。
@@ -515,5 +144,456 @@ func sendSignalWithStatus(pid int, sig syscall.Signal, status process.Status) te
 			return errMsg{err}
 		}
 		return signalOKMsg{pid: pid, status: status}
+	}
+}
+
+// updateKeyMsg 根据当前界面状态分发按键处理。
+// 它返回更新后的 model、可选命令以及一个布尔值表示是否已完全处理该按键。
+func (m model) updateKeyMsg(msg tea.KeyMsg) (model, tea.Cmd, bool) {
+	// Help overlay handling
+	if m.helpOpen {
+		newModel, cmd := m.updateHelpKey(msg)
+		return newModel, cmd, true
+	}
+
+	// Confirm overlay handling takes precedence (except errors already handled above).
+	if m.confirm != nil {
+		newModel, cmd := m.updateConfirmKey(msg)
+		return newModel, cmd, true
+	}
+
+	// Dependency mode (T) takes precedence over other states except help/confirm.
+	if m.depMode {
+		newModel, cmd, handled := m.updateDepModeKey(msg)
+		if handled {
+			return newModel, cmd, true
+		}
+		m = newModel
+	}
+
+	// Error overlay
+	if m.err != nil {
+		newModel, cmd := m.updateErrorKey(msg)
+		return newModel, cmd, true
+	}
+
+	// Details view
+	if m.showDetails {
+		newModel, cmd := m.updateDetailsKey(msg)
+		return newModel, cmd, true
+	}
+
+	// Search-focused handling in main list mode.
+	if m.textInput.Focused() {
+		newModel, cmd := m.updateSearchKey(msg)
+		return newModel, cmd, true
+	}
+
+	// Fallback to main list key handling.
+	return m.updateMainListKey(msg)
+}
+
+// updateHelpKey handles key events when the help overlay is open.
+func (m model) updateHelpKey(msg tea.KeyMsg) (model, tea.Cmd) {
+	switch msg.String() {
+	case "?", "esc":
+		m.helpOpen = false
+		return m, nil
+	case "ctrl+c", "q":
+		return m, tea.Quit
+	default:
+		return m, nil
+	}
+}
+
+// updateConfirmKey handles key events when the confirm overlay is active.
+func (m model) updateConfirmKey(msg tea.KeyMsg) (model, tea.Cmd) {
+	switch msg.String() {
+	case "y", "enter":
+		op := *m.confirm
+		m.confirm = nil
+		return m, sendSignalWithStatus(int(op.pid), op.sig, op.status)
+	case "n", "esc":
+		m.confirm = nil
+		return m, nil
+	case "ctrl+c", "q":
+		return m, tea.Quit
+	default:
+		return m, nil
+	}
+}
+
+// updateDepModeKey handles key events in dependency-tree (T) mode.
+// It returns handled=false for keys that should fall back to main list handling.
+func (m model) updateDepModeKey(msg tea.KeyMsg) (model, tea.Cmd, bool) {
+	var cmd tea.Cmd
+
+	// When in T-mode and search is focused, update input first.
+	if m.textInput.Focused() {
+		switch msg.String() {
+		case "enter", "esc":
+			m.textInput.Blur()
+		}
+		m.textInput, cmd = m.textInput.Update(msg)
+		// keep cursor clamped to filtered lines
+		if c := len(applyDepFilters(m, buildDepLines(m))); m.depCursor >= c {
+			if c > 0 {
+				m.depCursor = c - 1
+			} else {
+				m.depCursor = 0
+			}
+		}
+		return m, cmd, true
+	}
+
+	switch msg.String() {
+	case "esc":
+		m.depMode = false
+		m.depExpanded = nil
+		m.depCursor = 0
+		return m, nil, true
+	case "ctrl+c", "q":
+		return m, tea.Quit, true
+	case "ctrl+r":
+		return m, getProcesses, true
+	case "/":
+		m.textInput.Focus()
+		return m, nil, true
+	case "?":
+		m.helpOpen = true
+		return m, nil, true
+	case "S":
+		m.depAliveOnly = !m.depAliveOnly
+		if c := len(applyDepFilters(m, buildDepLines(m))); m.depCursor >= c {
+			if c > 0 {
+				m.depCursor = c - 1
+			} else {
+				m.depCursor = 0
+			}
+		}
+		return m, nil, true
+	case "L":
+		m.depPortsOnly = !m.depPortsOnly
+		if c := len(applyDepFilters(m, buildDepLines(m))); m.depCursor >= c {
+			if c > 0 {
+				m.depCursor = c - 1
+			} else {
+				m.depCursor = 0
+			}
+		}
+		return m, nil, true
+	case "up", "k":
+		if m.depCursor > 0 {
+			m.depCursor--
+		}
+		return m, nil, true
+	case "down", "j":
+		if m.depCursor < len(buildDepLines(m))-1 {
+			m.depCursor++
+		}
+		return m, nil, true
+	case "left", "h":
+		lines := buildDepLines(m)
+		if len(lines) == 0 {
+			return m, nil, true
+		}
+		ln := lines[m.depCursor]
+		if ln.isMore {
+			// collapse parent and reset deeper/page state
+			st := m.depExpanded[ln.parent]
+			st.expanded = false
+			st.page = 1
+			st.depthExtend = 0
+			m.depExpanded[ln.parent] = st
+		} else if ln.pid != 0 {
+			st := m.depExpanded[ln.pid]
+			st.expanded = false
+			if st.page == 0 {
+				st.page = 1
+			}
+			m.depExpanded[ln.pid] = st
+		}
+		if m.depCursor >= len(buildDepLines(m)) {
+			if c := len(buildDepLines(m)); c > 0 {
+				m.depCursor = c - 1
+			} else {
+				m.depCursor = 0
+			}
+		}
+		return m, nil, true
+	case "right", "l":
+		lines := buildDepLines(m)
+		if len(lines) == 0 {
+			return m, nil, true
+		}
+		ln := lines[m.depCursor]
+		if ln.isMore {
+			st := m.depExpanded[ln.parent]
+			if ln.isDeeper {
+				st.depthExtend++
+				st.expanded = true
+			} else {
+				if st.page == 0 {
+					st.page = 1
+				}
+				st.page++
+				st.expanded = true
+			}
+			m.depExpanded[ln.parent] = st
+		} else if ln.pid != 0 {
+			st := m.depExpanded[ln.pid]
+			if st.page == 0 {
+				st.page = 1
+			}
+			st.expanded = true
+			m.depExpanded[ln.pid] = st
+		}
+		if m.depCursor >= len(buildDepLines(m)) {
+			if c := len(buildDepLines(m)); c > 0 {
+				m.depCursor = c - 1
+			} else {
+				m.depCursor = 0
+			}
+		}
+		return m, nil, true
+	case " ":
+		lines := buildDepLines(m)
+		if len(lines) == 0 {
+			return m, nil, true
+		}
+		ln := lines[m.depCursor]
+		if ln.isMore {
+			st := m.depExpanded[ln.parent]
+			if ln.isDeeper {
+				st.depthExtend++
+				st.expanded = true
+			} else {
+				if st.page == 0 {
+					st.page = 1
+				}
+				st.page++
+				st.expanded = true
+			}
+			m.depExpanded[ln.parent] = st
+		} else if ln.pid != 0 {
+			st := m.depExpanded[ln.pid]
+			if st.page == 0 {
+				st.page = 1
+			}
+			st.expanded = !st.expanded
+			if st.page == 0 {
+				st.page = 1
+			}
+			m.depExpanded[ln.pid] = st
+		}
+		if m.depCursor >= len(buildDepLines(m)) {
+			if c := len(buildDepLines(m)); c > 0 {
+				m.depCursor = c - 1
+			} else {
+				m.depCursor = 0
+			}
+		}
+		return m, nil, true
+	case "enter", "o":
+		lines := buildDepLines(m)
+		if len(lines) == 0 {
+			return m, nil, true
+		}
+		ln := lines[m.depCursor]
+		if ln.pid != 0 {
+			m.depRootPID = ln.pid
+			if m.depExpanded == nil {
+				m.depExpanded = make(map[int32]depNodeState)
+			}
+			m.depExpanded = map[int32]depNodeState{ln.pid: {expanded: true, page: 1}}
+			m.depCursor = 0
+		}
+		return m, nil, true
+	case "u":
+		if root := m.findProcess(m.depRootPID); root != nil {
+			if parent := m.findProcess(root.PPid); parent != nil {
+				m.depRootPID = parent.Pid
+				if m.depExpanded == nil {
+					m.depExpanded = make(map[int32]depNodeState)
+				}
+				m.depExpanded = map[int32]depNodeState{parent.Pid: {expanded: true, page: 1}}
+				m.depCursor = 0
+			}
+		}
+		return m, nil, true
+	case "a":
+		m.depShowAncestors = !m.depShowAncestors
+		return m, nil, true
+	case "i":
+		lines := buildDepLines(m)
+		if len(lines) == 0 {
+			return m, nil, true
+		}
+		ln := lines[m.depCursor]
+		if ln.pid != 0 {
+			m.showDetails = true
+			m.processDetails = ""
+			return m, getProcessDetails(int(ln.pid)), true
+		}
+		return m, nil, true
+	case "x":
+		lines := buildDepLines(m)
+		if len(lines) == 0 {
+			return m, nil, true
+		}
+		ln := lines[m.depCursor]
+		if ln.pid != 0 {
+			if it := m.findProcess(ln.pid); it != nil {
+				m.confirm = &confirmPrompt{pid: ln.pid, name: it.Executable, op: "kill", sig: syscall.SIGTERM, status: process.Killed}
+			}
+		}
+		return m, nil, true
+	case "p":
+		lines := buildDepLines(m)
+		if len(lines) == 0 {
+			return m, nil, true
+		}
+		ln := lines[m.depCursor]
+		if ln.pid != 0 {
+			if it := m.findProcess(ln.pid); it != nil {
+				m.confirm = &confirmPrompt{pid: ln.pid, name: it.Executable, op: "pause", sig: syscall.SIGSTOP, status: process.Paused}
+			}
+		}
+		return m, nil, true
+	case "r":
+		lines := buildDepLines(m)
+		if len(lines) == 0 {
+			return m, nil, true
+		}
+		ln := lines[m.depCursor]
+		if ln.pid != 0 {
+			if it := m.findProcess(ln.pid); it != nil && it.Status == process.Paused {
+				m.confirm = &confirmPrompt{pid: ln.pid, name: it.Executable, op: "resume", sig: syscall.SIGCONT, status: process.Alive}
+			}
+		}
+		return m, nil, true
+	default:
+		// Unhandled keys in depMode should fall back to main list handling.
+		return m, nil, false
+	}
+}
+
+// updateErrorKey handles key events when an error overlay is shown.
+func (m model) updateErrorKey(msg tea.KeyMsg) (model, tea.Cmd) {
+	switch msg.String() {
+	case "esc":
+		m.err = nil
+		return m, nil
+	case "ctrl+c", "q":
+		return m, tea.Quit
+	default:
+		return m, nil
+	}
+}
+
+// updateDetailsKey handles key events in the details view.
+func (m model) updateDetailsKey(msg tea.KeyMsg) (model, tea.Cmd) {
+	switch msg.String() {
+	case "esc":
+		m.showDetails = false
+		m.processDetails = "" // Clear details
+	}
+	return m, nil
+}
+
+// updateSearchKey handles key events when the search input is focused in main list mode.
+func (m model) updateSearchKey(msg tea.KeyMsg) (model, tea.Cmd) {
+	switch msg.String() {
+	case "enter", "esc":
+		m.textInput.Blur()
+	}
+	var cmd tea.Cmd
+	m.textInput, cmd = m.textInput.Update(msg)
+	m.filtered = m.filterProcesses(m.textInput.Value())
+	return m, cmd
+}
+
+// updateMainListKey handles key events in the main process list mode.
+// It returns handled=false for keys that should be passed to the generic handler.
+func (m model) updateMainListKey(msg tea.KeyMsg) (model, tea.Cmd, bool) {
+	switch msg.String() {
+	case "ctrl+c", "q":
+		return m, tea.Quit, true
+	case "ctrl+r":
+		return m, getProcesses, true
+	case "?":
+		m.helpOpen = true
+		return m, nil, true
+	case "/":
+		m.textInput.Focus()
+		return m, nil, true
+	case "esc":
+		// ESC 退出模式：此处用于退出 ports-only 视图。
+		if m.portsOnly {
+			m.portsOnly = false
+			m.filtered = m.filterProcesses(m.textInput.Value())
+			return m, nil, true
+		}
+		// 未处于 ports-only 模式时视作未处理，交由外层处理。
+	case "P":
+		// 进入“仅显示占用端口的进程”模式；退出由 ESC 统一处理。
+		if !m.portsOnly {
+			m.portsOnly = true
+			m.filtered = m.filterProcesses(m.textInput.Value())
+		}
+		return m, nil, true
+	case "T":
+		if len(m.filtered) > 0 {
+			p := m.filtered[m.cursor]
+			m.depMode = true
+			m.depRootPID = p.Pid
+			if m.depExpanded == nil {
+				m.depExpanded = make(map[int32]depNodeState)
+			}
+			m.depExpanded[p.Pid] = depNodeState{expanded: true, page: 1}
+			m.depCursor = 0
+		}
+		return m, nil, true
+	case "up", "k":
+		if m.cursor > 0 {
+			m.cursor--
+		}
+		return m, nil, true
+	case "down", "j":
+		if m.cursor < len(m.filtered)-1 {
+			m.cursor++
+		}
+		return m, nil, true
+	case "enter":
+		if len(m.filtered) > 0 {
+			p := m.filtered[m.cursor]
+			return m, sendSignalWithStatus(int(p.Pid), syscall.SIGTERM, process.Killed), true
+		}
+		return m, nil, true
+	case "p":
+		if len(m.filtered) > 0 {
+			p := m.filtered[m.cursor]
+			return m, sendSignalWithStatus(int(p.Pid), syscall.SIGSTOP, process.Paused), true
+		}
+		return m, nil, true
+	case "r":
+		if len(m.filtered) > 0 {
+			p := m.filtered[m.cursor]
+			if p.Status == process.Paused {
+				return m, sendSignalWithStatus(int(p.Pid), syscall.SIGCONT, process.Alive), true
+			}
+		}
+		return m, nil, true
+	case "i":
+		if len(m.filtered) > 0 {
+			m.showDetails = true
+			m.processDetails = ""
+			p := m.filtered[m.cursor]
+			return m, getProcessDetails(int(p.Pid)), true
+		}
+		return m, nil, true
+	default:
+		// Key not handled here; let outer handler decide.
+		return m, nil, false
 	}
 }
