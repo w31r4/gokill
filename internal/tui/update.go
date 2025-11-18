@@ -1,9 +1,6 @@
 package tui
 
 import (
-	"fmt"
-	"sort"
-	"strconv"
 	"strings"
 	"syscall"
 
@@ -12,22 +9,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-// --- Dependency tree structures & confirm prompt ---
-
-type depNodeState struct {
-	expanded    bool
-	page        int
-	depthExtend int
-}
-
-type depLine struct {
-	pid      int32
-	parent   int32
-	isMore   bool
-	text     string
-	depth    int
-	isDeeper bool
-}
+// --- Confirm prompt state ---
 
 type confirmPrompt struct {
 	pid    int32
@@ -513,137 +495,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, tea.Batch(cmd, filterCmd)
 }
 
-// buildDepLines 将当前依赖树按展开/分页状态扁平化为行。
-func buildDepLines(m model) []depLine {
-	root := m.findProcess(m.depRootPID)
-	if root == nil {
-		return nil
-	}
-	childrenMap := m.buildChildrenMap()
-
-	var lines []depLine
-	// 根行（深度0）
-	lines = append(lines, depLine{pid: root.Pid, parent: 0, isMore: false, text: fmt.Sprintf("%s (%d)", root.Executable, root.Pid), depth: 0})
-
-	// 递归子节点
-	var walk func(pid int32, prefix string, depth int)
-	walk = func(pid int32, prefix string, depth int) {
-		kids := childrenMap[pid]
-		if len(kids) == 0 {
-			return
-		}
-
-		// 排序稳定
-		sort.Slice(kids, func(i, j int) bool {
-			if kids[i].Executable == kids[j].Executable {
-				return kids[i].Pid < kids[j].Pid
-			}
-			return kids[i].Executable < kids[j].Executable
-		})
-
-		// 展开状态与分页
-		st := m.depExpanded[pid]
-		if !st.expanded && pid != m.depRootPID {
-			return
-		}
-		page := st.page
-		if page <= 0 {
-			page = 1
-		}
-		limit := dependencyTreeChildLimit * page
-		show := len(kids)
-		if show > limit {
-			show = limit
-		}
-
-		for i := 0; i < show; i++ {
-			child := kids[i]
-			last := (i == show-1) && (show == len(kids))
-			connector := branchSymbol(last)
-			line := fmt.Sprintf("%s%s %s (%d)", prefix, connector, child.Executable, child.Pid)
-			lines = append(lines, depLine{pid: child.Pid, parent: pid, text: line, depth: depth + 1})
-
-			nextPrefix := prefix
-			if last {
-				nextPrefix += "   "
-			} else {
-				nextPrefix += "│  "
-			}
-
-			// allow per-parent deeper expansion beyond global depth
-			allowed := dependencyTreeDepth - 1 + m.depExpanded[pid].depthExtend
-			if depth < allowed {
-				walk(child.Pid, nextPrefix, depth+1)
-			} else if len(childrenMap[child.Pid]) > 0 {
-				// depth limit reached; add interactive deeper placeholder
-				moreLine := fmt.Sprintf("%s└─ … (deeper)", nextPrefix)
-				lines = append(lines, depLine{pid: 0, parent: child.Pid, isMore: true, isDeeper: true, text: moreLine, depth: depth + 1})
-			}
-		}
-
-		if show < len(kids) {
-			// 还有更多同级子项，提供分页提示行
-			more := len(kids) - show
-			connector := branchSymbol(true)
-			moreLine := fmt.Sprintf("%s%s … (%d more)", prefix, connector, more)
-			lines = append(lines, depLine{pid: 0, parent: pid, isMore: true, isDeeper: false, text: moreLine, depth: depth})
-		}
-	}
-
-	// 根默认展开
-	if st, ok := m.depExpanded[root.Pid]; !ok || !st.expanded {
-		m.depExpanded[root.Pid] = depNodeState{expanded: true, page: 1}
-	}
-	walk(root.Pid, "", 0)
-	return lines
-}
-
-// applyDepFilters 根据 T 模式的筛选条件过滤行：文本过滤、仅存活、仅监听端口。
-func applyDepFilters(m model, lines []depLine) []depLine {
-	if len(lines) == 0 {
-		return lines
-	}
-
-	term := strings.TrimSpace(m.textInput.Value())
-	hasTerm := term != ""
-	var out []depLine
-	for _, ln := range lines {
-		// never drop paging/ellipsis lines完全, but they are not actionable
-		if ln.pid == 0 {
-			if hasTerm {
-				// skip ellipsis on filter to reduce noise
-				continue
-			}
-			out = append(out, ln)
-			continue
-		}
-		it := m.findProcess(ln.pid)
-		if it == nil {
-			continue
-		}
-		if m.depAliveOnly && it.Status != process.Alive {
-			continue
-		}
-		if m.depPortsOnly && len(it.Ports) == 0 {
-			continue
-		}
-		if hasTerm {
-			// case-insensitive substring on text and pid match
-			if !strings.Contains(strings.ToLower(ln.text), strings.ToLower(term)) {
-				if termPid, err := strconv.Atoi(term); err == nil {
-					if int32(termPid) != it.Pid {
-						continue
-					}
-				} else {
-					continue
-				}
-			}
-		}
-		out = append(out, ln)
-	}
-	return out
-}
-
 // sendSignal 是一个命令工厂函数，用于创建一个向指定PID进程发送信号的命令。
 func sendSignal(pid int, sig syscall.Signal) tea.Cmd {
 	return func() tea.Msg {
@@ -666,12 +517,3 @@ func sendSignalWithStatus(pid int, sig syscall.Signal, status process.Status) te
 		return signalOKMsg{pid: pid, status: status}
 	}
 }
-
-// branchSymbol returns the tree drawing character for normal vs last child.
-func branchSymbol(last bool) string {
-	if last {
-		return "└─"
-	}
-	return "├─"
-}
-

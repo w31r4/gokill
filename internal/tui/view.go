@@ -66,11 +66,8 @@ var (
 
 // 定义了进程列表视口（Viewport）的高度，即一次显示多少行。
 const (
-	viewHeight               = 7
-	dependencyTreeDepth      = 3
-	dependencyTreeChildLimit = 5
-	dependencyViewHeight     = 18
-	ancestorChainLimit       = 6
+	viewHeight           = 7
+	dependencyViewHeight = 18
 )
 
 // View 函数根据当前的应用状态（model）生成一个字符串，用于在终端上显示。
@@ -518,4 +515,3 @@ func renderDependencyChildren(b *strings.Builder, children map[int32][]*process.
 		fmt.Fprintf(b, "%s└─ ... (%d more)\n", prefix, truncated)
 	}
 }
-

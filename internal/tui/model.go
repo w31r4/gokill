@@ -190,54 +190,6 @@ func portsToStrings(ports []uint32) []string {
 	return parts
 }
 
-// buildChildrenMap 为依赖树构建父 PID 到子进程列表的映射。
-func (m model) buildChildrenMap() map[int32][]*process.Item {
-	mp := make(map[int32][]*process.Item)
-	for _, it := range m.processes {
-		mp[it.PPid] = append(mp[it.PPid], it)
-	}
-	return mp
-}
-
-// findProcess 在当前进程列表中按 PID 查找进程。
-func (m model) findProcess(pid int32) *process.Item {
-	for _, it := range m.processes {
-		if it.Pid == pid {
-			return it
-		}
-	}
-	return nil
-}
-
-// buildAncestorLines 生成从当前 root 向上的有限祖先进程链（最多 ancestorChainLimit）。
-func (m model) buildAncestorLines(root *process.Item) []string {
-	if root == nil {
-		return nil
-	}
-	chain := make([]*process.Item, 0, ancestorChainLimit)
-	cur := root
-	for i := 0; i < ancestorChainLimit; i++ {
-		if cur.PPid == 0 {
-			break
-		}
-		p := m.findProcess(cur.PPid)
-		if p == nil {
-			break
-		}
-		chain = append(chain, p)
-		cur = p
-	}
-	if len(chain) == 0 {
-		return nil
-	}
-	out := make([]string, 0, len(chain))
-	for i := len(chain) - 1; i >= 0; i-- {
-		indent := strings.Repeat("   ", len(chain)-1-i)
-		out = append(out, fmt.Sprintf("%s└─ %s (%d)", indent, chain[i].Executable, chain[i].Pid))
-	}
-	return out
-}
-
 // Start 是 TUI 模块的公共入口点。
 // main.go 中的 main 函数会调用它来启动整个应用。
 func Start(filter string) {
@@ -252,4 +204,3 @@ func Start(filter string) {
 		os.Exit(1)
 	}
 }
-
