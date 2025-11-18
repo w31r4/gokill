@@ -134,8 +134,10 @@ func buildDepLines(m model) []depLine {
 				walk(child.Pid, nextPrefix, depth+1)
 			} else if len(childrenMap[child.Pid]) > 0 {
 				// 达到限制但仍有子节点，添加一个可交互的“... deeper”提示行。
+				// 这里的 parent 记录的是当前节点 pid（而不是更深一层的 child.Pid），
+				// 这样在按键处理逻辑中，我们可以通过 parent 精确地找到需要增加 depthExtend 的节点。
 				moreLine := fmt.Sprintf("%s└─ … (deeper)", nextPrefix)
-				lines = append(lines, depLine{pid: 0, parent: child.Pid, isMore: true, isDeeper: true, text: moreLine, depth: depth + 1})
+				lines = append(lines, depLine{pid: 0, parent: pid, isMore: true, isDeeper: true, text: moreLine, depth: depth + 1})
 			}
 		}
 
