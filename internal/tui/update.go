@@ -596,4 +596,7 @@ func (m model) updateMainListKey(msg tea.KeyMsg) (model, tea.Cmd, bool) {
 		// Key not handled here; let outer handler decide.
 		return m, nil, false
 	}
+
+	// Should not be reachable, keep compiler happy.
+	return m, nil, false
 }
