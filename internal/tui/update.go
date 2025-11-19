@@ -7,6 +7,7 @@ import (
 	"github.com/w31r4/gokill/internal/process"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 )
 
 // confirmPrompt 结构体用于存储确认对话框所需的状态。
@@ -69,8 +70,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.processes = msg.processes // 使用新列表更新模型中的完整进程列表。
 		m.warnings = msg.warnings   // 存储获取过程中产生的任何警告。
 
-
-
 		m.filtered = m.filterProcesses(m.textInput.Value()) // 根据当前的搜索词重新过滤列表。
 		// 返回一个命令，在后台异步地将新的进程列表保存到缓存文件。
 		// 这是一个“即发即忘”的命令，我们不关心它的结果。
@@ -82,7 +81,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// 消息2: 单个进程的详细信息已加载。
 	case processDetailsMsg:
 		m.processDetails = string(msg) // 更新模型中的详情字符串。
-		return m, nil                  // 无需执行新的命令。
+		// 格式化详情内容并设置给 viewport
+		formattedDetails := formatProcessDetails(m.processDetails)
+		m.detailsViewport.SetContent(formattedDetails)
+		m.detailsViewport.GotoTop()
+		return m, nil // 无需执行新的命令。
 
 	// 消息3: 发生了一个错误。
 	case errMsg:
@@ -108,7 +111,24 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Bubble Tea 的运行时会自动调用 `View` 函数来重绘界面。
 		return m, nil
 
-	// 消息5: 用户按键输入。
+	// 消息5: 窗口大小改变
+	case tea.WindowSizeMsg:
+		// 更新 viewport 的大小
+		// 预留一些空间给标题和帮助信息
+		headerHeight := lipgloss.Height(detailTitleStyle.Render("Header"))
+		footerHeight := lipgloss.Height(detailHelpStyle.Render("Footer"))
+		verticalMarginHeight := headerHeight + footerHeight + 2 // +2 for padding/borders
+
+		// Calculate viewport width:
+		// Window Width
+		// - 4 (docStyle margin: 2 left + 2 right)
+		// - 2 (detailPaneStyle border: 1 left + 1 right)
+		// - 4 (detailPaneStyle padding: 2 left + 2 right)
+		// Total deduction = 10
+		m.detailsViewport.Width = msg.Width - 10
+		m.detailsViewport.Height = msg.Height - verticalMarginHeight
+
+	// 消息6: 用户按键输入。
 	case tea.KeyMsg:
 		// 将按键消息分发给一个专门的、基于当前UI模式的处理器。
 		newModel, keyCmd, handled := m.updateKeyMsg(msg)
@@ -337,6 +357,7 @@ func (m model) updateDepModeKey(msg tea.KeyMsg) (model, tea.Cmd, bool) {
 			if ln.pid != 0 {
 				m.showDetails = true
 				m.processDetails = ""
+				m.detailsViewport.SetContent("Loading...")
 				return m, getProcessDetails(int(ln.pid)), true
 			}
 		}
@@ -452,13 +473,16 @@ func (m model) updateErrorKey(msg tea.KeyMsg) (model, tea.Cmd) {
 // updateDetailsKey 专门处理当进程详情视图 (`m.showDetails == true`) 显示时的按键事件。
 func (m model) updateDetailsKey(msg tea.KeyMsg) (model, tea.Cmd) {
 	switch msg.String() {
-	case "esc", "q", "i":
+	case "esc":
 		m.showDetails = false
 		m.processDetails = "" // 清空详情内容，以便下次重新加载。
 	case "ctrl+c":
 		return m, tea.Quit
 	}
-	return m, nil
+	// 将按键转发给 viewport
+	var cmd tea.Cmd
+	m.detailsViewport, cmd = m.detailsViewport.Update(msg)
+	return m, cmd
 }
 
 // updateSearchKey 专门处理当主列表的搜索框被激活 (`m.textInput.Focused()`) 时的按键事件。

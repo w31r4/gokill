@@ -270,14 +270,29 @@ func GetProcessDetails(pid int) (string, error) {
 		startTime = time.Unix(createTime/1000, 0).Format("Jan 02 15:04")
 	}
 
+	// 获取进程名称 (Name)
+	name, err := p.Name()
+	if err != nil {
+		name = "n/a"
+	}
+
+	// 获取可执行文件全路径 (Exe)
+	exe, err := p.Exe()
+	if err != nil {
+		// 如果没有权限获取全路径，就留空或显示提示
+		exe = "(permission denied or n/a)"
+	}
+
+	// 获取完整命令行 (Cmdline)
 	cmdline, err := p.Cmdline()
 	if err != nil || cmdline == "" {
-		cmdline, _ = p.Name()
+		cmdline = "(n/a)"
 	}
 
 	var b strings.Builder
 	fmt.Fprintf(&b, "  PID:\t%d\n", p.Pid)
 	fmt.Fprintf(&b, "  User:\t%s\n", user)
+	fmt.Fprintf(&b, "  Name:\t%s\n", name)
 	fmt.Fprintf(&b, "  %%CPU:\t%.1f\n", cpuPercent)
 	fmt.Fprintf(&b, "  %%MEM:\t%.1f\n", memPercent)
 	fmt.Fprintf(&b, "  Start:\t%s\n", startTime)
@@ -288,6 +303,7 @@ func GetProcessDetails(pid int) (string, error) {
 		}
 		cancel()
 	}
+	fmt.Fprintf(&b, "  Exe:\t%s\n", exe)
 	fmt.Fprintf(&b, "  Command:\t%s\n", cmdline)
 
 	return b.String(), nil

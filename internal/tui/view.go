@@ -34,11 +34,11 @@ var (
 	// detailTitleStyle 定义了详情视图的标题样式。
 	detailTitleStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("63")).Bold(true)
 	// detailPaneStyle 定义了详情视图的内容面板样式。
-	detailPaneStyle = paneStyle.Copy().Width(80).BorderForeground(lipgloss.Color("63")).Padding(1, 2)
+	detailPaneStyle = paneStyle.Copy().BorderForeground(lipgloss.Color("63")).Padding(1, 2)
 	// detailLabelStyle 定义了详情视图中标签（如 "PID:", "User:"）的样式，使其右对齐并加粗。
-	detailLabelStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("63")).Bold(true).Width(10).Align(lipgloss.Right)
+	detailLabelStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Bold(true).Width(12).Align(lipgloss.Right)
 	// detailValueStyle 定义了详情视图中值的样式。
-	detailValueStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("15")).MaxWidth(60)
+	detailValueStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("255"))
 	// detailHelpStyle 定义了详情视图底部的帮助文本样式。
 	detailHelpStyle = faintStyle.Copy().MarginTop(1)
 	// errorTitleStyle, errorPaneStyle, errorHelpStyle, errorMessageStyle 定义了错误覆盖层的各种样式。
@@ -135,15 +135,11 @@ func (m model) View() string {
 // 这是一个全屏的覆盖视图。
 func (m model) renderDetailsView() string {
 	title := detailTitleStyle.Render("Process Details")
-	var pane string
-	// 当详情数据尚未加载完成时，显示一个加载提示。
-	if m.processDetails == "" {
-		pane = detailPaneStyle.Render(faintStyle.Render("Collecting details..."))
-	} else {
-		// 加载完成后，使用 `formatProcessDetails` 格式化并渲染详情内容。
-		pane = detailPaneStyle.Render(formatProcessDetails(m.processDetails))
-	}
-	help := detailHelpStyle.Render(" esc/i/q: back to list")
+
+	// 渲染 viewport 内容
+	pane := detailPaneStyle.Render(m.detailsViewport.View())
+
+	help := detailHelpStyle.Render(" esc: back to list • up/down/pgup/pgdn: scroll")
 	content := lipgloss.JoinVertical(lipgloss.Left, title, pane, help)
 	return docStyle.Render(content)
 }
@@ -316,7 +312,9 @@ func (m model) renderProcessPane() string {
 
 		pidStr := pidStyle.Render(fmt.Sprintf("%d", p.Pid))
 		timeStr := timeStyle.Width(8).Render(p.StartTime)
-		cmdStr := commandStyle.Width(20).Render(p.Executable)
+		// Truncate the command to 20 characters to preserve layout
+		truncatedCmd := truncate(p.Executable, 20)
+		cmdStr := commandStyle.Width(20).Render(truncatedCmd)
 
 		// Construct the line manually to preserve styles
 		// Format: [Status] Command StartTime User PID
@@ -348,6 +346,15 @@ func (m model) renderProcessPane() string {
 
 	// 去掉末尾多余的换行，避免左侧列表底部出现空行。
 	return processPaneStyle.Render(strings.TrimRight(b.String(), "\n"))
+}
+
+// truncate ensures a string does not exceed maxLen.
+// If it does, it cuts it off and appends "…" (which takes 1 char width).
+func truncate(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen-1] + "…"
 }
 
 // renderPortPane 负责渲染右侧的端口信息面板。
