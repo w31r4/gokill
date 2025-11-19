@@ -83,6 +83,39 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.processDetails = string(msg) // 更新模型中的详情字符串。
 		// 格式化详情内容并设置给 viewport
 		formattedDetails := formatProcessDetails(m.processDetails)
+
+		// 按内容行数收缩详情 viewport 的高度，避免面板“又大又空”。
+		lines := strings.Split(formattedDetails, "\n")
+		contentHeight := len(lines)
+		if contentHeight <= 0 {
+			contentHeight = 1
+		}
+		maxHeight := m.detailsViewport.Height
+		if maxHeight <= 0 {
+			maxHeight = contentHeight
+		}
+		if contentHeight > maxHeight {
+			m.detailsViewport.Height = maxHeight
+		} else {
+			m.detailsViewport.Height = contentHeight
+		}
+
+		// 同理，按内容宽度适当收缩 viewport 宽度（不超过 WindowSizeMsg 计算的上限）。
+		maxWidth := m.detailsViewport.Width
+		contentWidth := 0
+		for _, ln := range lines {
+			if w := lipgloss.Width(ln); w > contentWidth {
+				contentWidth = w
+			}
+		}
+		if contentWidth > 0 {
+			if maxWidth > 0 && contentWidth > maxWidth {
+				m.detailsViewport.Width = maxWidth
+			} else if maxWidth == 0 || contentWidth < maxWidth {
+				m.detailsViewport.Width = contentWidth
+			}
+		}
+
 		m.detailsViewport.SetContent(formattedDetails)
 		m.detailsViewport.GotoTop()
 		return m, nil // 无需执行新的命令。
