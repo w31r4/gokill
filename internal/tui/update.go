@@ -113,20 +113,31 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	// 消息5: 窗口大小改变
 	case tea.WindowSizeMsg:
-		// 更新 viewport 的大小
-		// 预留一些空间给标题和帮助信息
-		headerHeight := lipgloss.Height(detailTitleStyle.Render("Header"))
-		footerHeight := lipgloss.Height(detailHelpStyle.Render("Footer"))
-		verticalMarginHeight := headerHeight + footerHeight + 2 // +2 for padding/borders
+		// 根据当前窗口和样式动态计算详情 viewport 的可用区域，
+		// 避免样式（margin/padding/border）调整后导致宽高计算失真。
 
-		// Calculate viewport width:
-		// Window Width
-		// - 4 (docStyle margin: 2 left + 2 right)
-		// - 2 (detailPaneStyle border: 1 left + 1 right)
-		// - 4 (detailPaneStyle padding: 2 left + 2 right)
-		// Total deduction = 10
-		m.detailsViewport.Width = msg.Width - 10
-		m.detailsViewport.Height = msg.Height - verticalMarginHeight
+		// 1. 标题和底部帮助文本本身占用的高度。
+		headerHeight := lipgloss.Height(detailTitleStyle.Render("Process Details"))
+		footerHeight := lipgloss.Height(detailHelpStyle.Render(" esc: back to list • up/down/pgup/pgdn: scroll"))
+
+		// 2. docStyle 与 detailPaneStyle 在垂直和水平方向上的“框架”尺寸。
+		docHFrame, docVFrame := docStyle.GetFrameSize()
+		paneHFrame, paneVFrame := detailPaneStyle.GetFrameSize()
+
+		// 3. 计算 viewport 的宽度和高度。
+		viewportWidth := msg.Width - docHFrame - paneHFrame
+		viewportHeight := msg.Height - docVFrame - paneVFrame - headerHeight - footerHeight
+
+		// 4. 防止出现非正数尺寸。
+		if viewportWidth < 0 {
+			viewportWidth = 0
+		}
+		if viewportHeight < 0 {
+			viewportHeight = 0
+		}
+
+		m.detailsViewport.Width = viewportWidth
+		m.detailsViewport.Height = viewportHeight
 
 	// 消息6: 用户按键输入。
 	case tea.KeyMsg:
