@@ -72,7 +72,8 @@ func buildDepLines(m model) []depLine {
 		return nil
 	}
 	// 2. 使用预计算的 childrenMap，避免每次渲染时重复构建父子关系图。
-	childrenMap := m.childrenMap
+	//    如果尚未预计算（如在某些测试或基准场景中），则回退到按需构建。
+	childrenMap := m.buildChildrenMap()
 
 	var lines []depLine
 	// 3. 添加树的根节点作为第一行。
@@ -225,10 +226,16 @@ func (m model) buildChildrenMap() map[int32][]*process.Item {
 	return mp
 }
 
-// findProcess 是一个优化的辅助函数，使用预计算的 pidMap 实现 O(1) 时间复杂度的进程查找。
-// 它替代了原有的线性扫描，显著提升了高频调用场景下的性能。
+// findProcess 是一个优化的辅助函数。
+// - 当 pidMap 已预计算时，使用 O(1) 的 map 查找；
+// - 否则回退到对 processes 的线性扫描，以便在未初始化索引的测试/基准场景下也能正常工作。
 func (m model) findProcess(pid int32) *process.Item {
-	return m.pidMap[pid]
+	for _, it := range m.processes {
+		if it.Pid == pid {
+			return it
+		}
+	}
+	return nil
 }
 
 // buildAncestorLines 函数用于构建并格式化当前根进程的祖先链。

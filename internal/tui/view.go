@@ -206,7 +206,7 @@ func (m model) renderDependencyView() string {
 	}
 
 	// 5. 使用预计算的 childrenMap，避免每次渲染时重复构建。
-	childrenMap := m.childrenMap
+	childrenMap := m.buildChildrenMap()
 	for i := start; i < end; i++ {
 		ln := lines[i]
 		lineText := ln.text

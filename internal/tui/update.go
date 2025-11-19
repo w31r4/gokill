@@ -69,15 +69,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.processes = msg.processes // 使用新列表更新模型中的完整进程列表。
 		m.warnings = msg.warnings   // 存储获取过程中产生的任何警告。
 
-		// --- 预计算优化数据结构 ---
-		// 初始化快速查找映射，避免后续高频操作中的线性扫描
-		m.pidMap = make(map[int32]*process.Item, len(m.processes))
-		m.childrenMap = make(map[int32][]*process.Item)
-		// 一次性遍历进程列表，填充两个映射表
-		for _, p := range m.processes {
-			m.pidMap[p.Pid] = p
-			m.childrenMap[p.PPid] = append(m.childrenMap[p.PPid], p)
-		}
+
 
 		m.filtered = m.filterProcesses(m.textInput.Value()) // 根据当前的搜索词重新过滤列表。
 		// 返回一个命令，在后台异步地将新的进程列表保存到缓存文件。

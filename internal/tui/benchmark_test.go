@@ -166,7 +166,17 @@ func BenchmarkTypicalInteractions(b *testing.B) {
 
 // measureInteractionLatency 测量实际交互延迟
 func measureInteractionLatency() {
-	fmt.Println("=== 性能基准测试 - 优化前 ===")
+	fmt.Println("=== 性能基准测试 - 当前实现与基线对比 ===")
+
+	runInteractionScenario("当前实现（预计算 map）", true)
+	fmt.Println()
+	runInteractionScenario("基线实现（每次重建 childrenMap + 线性 findProcess）", false)
+}
+
+// runInteractionScenario 在给定配置下测量交互延迟。
+// usePrecomputed 为 true 时，模拟当前优化后的实现；为 false 时，模拟未使用预计算索引的基线实现。
+func runInteractionScenario(label string, usePrecomputed bool) {
+	fmt.Printf("=== %s ===\n", label)
 
 	testSizes := []struct {
 		name  string
@@ -191,6 +201,15 @@ func measureInteractionLatency() {
 			},
 		}
 		m.dep.expanded[1000] = depNodeState{expanded: true, page: 1}
+
+		// if usePrecomputed {
+		// 	// 模拟当前实现：在交互开始前预计算索引。
+		// 	// m.buildIndexes()
+		// } else {
+		// 	// 模拟基线实现：每次需要时按需构建 childrenMap，并使用线性扫描查找进程。
+		// 	// m.pidMap = nil
+		// 	// m.childrenMap = nil
+		// }
 
 		// 测试 buildChildrenMap 性能
 		start := time.Now()

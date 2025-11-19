@@ -56,10 +56,6 @@ type model struct {
 	// filtered 存储根据用户输入（搜索词）和视图模式（如 portsOnly）过滤后的进程列表。
 	// 这是在主列表视图中实际向用户展示的数据。
 	filtered []*process.Item
-	// pidMap 提供从PID到进程指针的快速查找映射，用于替代线性扫描，实现O(1)时间复杂度的进程查找。
-	pidMap map[int32]*process.Item
-	// childrenMap 是预计算的父PID到子进程列表的映射，避免在每次渲染时重复构建父子关系图。
-	childrenMap map[int32][]*process.Item
 
 	// --- UI 状态 ---
 	// cursor 表示当前用户界面上光标选中的项目在 `filtered` 列表中的索引。
@@ -217,6 +213,8 @@ func portsToStrings(ports []uint32) []string {
 	}
 	return parts
 }
+
+
 
 // Start 是 TUI 模块的公共入口点。
 // main.go 中的 main 函数会调用它来启动整个应用。
