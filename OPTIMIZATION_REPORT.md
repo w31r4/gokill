@@ -25,3 +25,11 @@ The benchmark simulated a user interacting with the dependency tree (moving curs
 
 ## Conclusion
 The pre-computation strategy yielded drastic performance improvements, making the UI significantly more responsive, especially on systems with a large number of processes. While the changes have been reverted for the current iteration, the data strongly supports re-applying this optimization if UI latency becomes a concern in the future.
+
+## UI Beautification
+In addition to performance analysis, the application's user interface was enhanced to improve readability and aesthetics.
+
+### Visual Improvements
+-   **Root User Distinction**: Processes owned by `root` are now highlighted in **Bold Red**, making security-relevant processes immediately identifiable.
+-   **Port Information**: The ports pane now features a distinct header style and green port numbers for better visual separation.
+-   **Column Styling**: Process details (PID, Command, Start Time) are now rendered with distinct colors (Blue, Bold White, Gray) to improve data scannability.

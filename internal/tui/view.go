@@ -54,6 +54,21 @@ var (
 	// help...Style 定义了帮助信息覆盖层的各种样式。
 	helpTitleStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("12")).Bold(true)
 	helpPaneStyle  = paneStyle.Copy().BorderForeground(lipgloss.Color("12")).Width(78).Padding(1, 2)
+	// rootUserStyle for the root user (Red, Bold)
+	rootUserStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Bold(true)
+	// normalUserStyle for other users (Cyan)
+	normalUserStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("87"))
+	// pidStyle for Process ID (Blue)
+	pidStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("33"))
+	// timeStyle for Start Time (Faint/Gray)
+	timeStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+	// commandStyle for Command Name (White, Bold)
+	commandStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("255")).Bold(true)
+
+	// portHeaderStyle for the "Ports" title (Orange/Gold)
+	portHeaderStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Bold(true).Underline(true)
+	// portNumberStyle for the port numbers (Green)
+	portNumberStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("46"))
 )
 
 // 定义了不同列表视图的“视口”（Viewport）高度，即一次在屏幕上显示多少行。
@@ -290,7 +305,28 @@ func (m model) renderProcessPane() string {
 		case process.Paused:
 			status = "P"
 		}
-		line := fmt.Sprintf("[%s] %-20s %-8s %-10s %d", status, p.Executable, p.StartTime, p.User, p.Pid)
+
+		// Apply styles to individual columns
+		userStr := p.User
+		if userStr == "root" {
+			userStr = rootUserStyle.Width(10).Render(userStr)
+		} else {
+			userStr = normalUserStyle.Width(10).Render(userStr)
+		}
+
+		pidStr := pidStyle.Render(fmt.Sprintf("%d", p.Pid))
+		timeStr := timeStyle.Width(8).Render(p.StartTime)
+		cmdStr := commandStyle.Width(20).Render(p.Executable)
+
+		// Construct the line manually to preserve styles
+		// Format: [Status] Command StartTime User PID
+		line := fmt.Sprintf("[%s] %s %s %s %s",
+			status,
+			cmdStr,
+			timeStr,
+			userStr,
+			pidStr,
+		)
 
 		switch p.Status {
 		case process.Killed:
@@ -306,7 +342,7 @@ func (m model) renderProcessPane() string {
 		if i == m.cursor {
 			fmt.Fprintln(&b, selectedStyle.Render("❯ "+line))
 		} else {
-			fmt.Fprintln(&b, "  "+faintStyle.Render(line))
+			fmt.Fprintln(&b, "  "+line)
 		}
 	}
 
@@ -317,7 +353,7 @@ func (m model) renderProcessPane() string {
 // renderPortPane 负责渲染右侧的端口信息面板。
 func (m model) renderPortPane() string {
 	var b strings.Builder
-	fmt.Fprintln(&b, "Ports")
+	fmt.Fprintln(&b, portHeaderStyle.Render("Ports"))
 
 	// 如果没有进程或光标无效，则显示空状态，并提示 T 模式查看依赖树。
 	if len(m.filtered) == 0 || m.cursor >= len(m.filtered) {
@@ -332,7 +368,7 @@ func (m model) renderPortPane() string {
 		fmt.Fprintln(&b, faintStyle.Render("(none)"))
 	} else {
 		for _, port := range p.Ports {
-			fmt.Fprintln(&b, fmt.Sprintf("%d", port))
+			fmt.Fprintln(&b, portNumberStyle.Render(fmt.Sprintf("%d", port)))
 		}
 	}
 

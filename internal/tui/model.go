@@ -10,7 +10,9 @@ import (
 	"github.com/w31r4/gokill/internal/process"
 
 	"github.com/charmbracelet/bubbles/textinput"
+	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/sahilm/fuzzy"
 )
 
@@ -74,6 +76,8 @@ type model struct {
 	showDetails bool
 	// processDetails 存储从 `GetProcessDetails` 获取到的、准备在详情视图中显示的字符串。
 	processDetails string
+	// detailsViewport 是一个用于显示长文本内容的滚动视图组件。
+	detailsViewport viewport.Model
 	// portsOnly 是一个布尔标志，当为 `true` 时，主列表只显示那些正在监听端口的进程。
 	portsOnly bool
 	// confirm 指向一个 `confirmPrompt` 结构体，当需要用户确认一个危险操作（如杀死进程）时，
@@ -96,6 +100,10 @@ func InitialModel(filter string) model {
 	ti.Width = 20
 	ti.SetValue(filter)
 
+	// 初始化详情视图的 viewport
+	vp := viewport.New(80, 20) // 初始大小，稍后会根据窗口大小调整
+	vp.Style = lipgloss.NewStyle().Padding(0, 1)
+
 	// 尝试从缓存文件加载上一次的进程列表。
 	// 这里的 `_` 忽略了可能发生的错误（例如，首次运行或缓存文件损坏）。
 	// 即使加载失败，`cached` 也会是一个空的 `[]*process.Item` 切片，程序可以正常继续。
@@ -104,8 +112,9 @@ func InitialModel(filter string) model {
 
 	// 创建并初始化 model 结构体。
 	m := model{
-		textInput: ti,     // 设置文本输入框组件。
-		processes: cached, // 使用加载的缓存数据作为初始的完整进程列表。
+		textInput:       ti,     // 设置文本输入框组件。
+		processes:       cached, // 使用加载的缓存数据作为初始的完整进程列表。
+		detailsViewport: vp,     // 设置详情视图组件
 	}
 	// 根据初始的过滤条件（可能来自命令行参数）对缓存数据进行一次过滤。
 	m.filtered = m.filterProcesses(filter)
@@ -213,8 +222,6 @@ func portsToStrings(ports []uint32) []string {
 	}
 	return parts
 }
-
-
 
 // Start 是 TUI 模块的公共入口点。
 // main.go 中的 main 函数会调用它来启动整个应用。
