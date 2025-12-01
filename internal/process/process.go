@@ -218,12 +218,12 @@ func GetProcesses() ([]*Item, []error, error) {
 	// 等待后台聚合器读取完所有 warnings
 	warnWG.Wait()
 
-	// 最后，对结果进行排序，以便在界面上更友好地展示。
+	// 最后，对结果进行排序，以便在界面上更友好
 	sort.Slice(items, func(i, j int) bool {
 		return items[i].Executable < items[j].Executable
 	})
 
-	// 返回最终处理好的进程列表和所有警告。
+	// 返回最终处理好的进程列表和所有警告
 	return items, collectedWarnings, nil
 }
 
