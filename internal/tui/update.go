@@ -420,7 +420,7 @@ func (m model) updateDepModeKey(msg tea.KeyMsg) (model, tea.Cmd, bool) {
 		if len(lines) > 0 && m.dep.cursor < len(lines) {
 			ln := lines[m.dep.cursor]
 			if it := m.findProcess(ln.pid); it != nil {
-				m.confirm = &confirmPrompt{pid: ln.pid, name: it.Executable, op: "pause", sig: syscall.SIGSTOP, status: process.Paused}
+				m.confirm = &confirmPrompt{pid: ln.pid, name: it.Executable, op: "pause", sig: sigStop, status: process.Paused}
 			}
 		}
 		return m, nil, true
@@ -429,7 +429,7 @@ func (m model) updateDepModeKey(msg tea.KeyMsg) (model, tea.Cmd, bool) {
 		if len(lines) > 0 && m.dep.cursor < len(lines) {
 			ln := lines[m.dep.cursor]
 			if it := m.findProcess(ln.pid); it != nil && it.Status == process.Paused {
-				m.confirm = &confirmPrompt{pid: ln.pid, name: it.Executable, op: "resume", sig: syscall.SIGCONT, status: process.Alive}
+				m.confirm = &confirmPrompt{pid: ln.pid, name: it.Executable, op: "resume", sig: sigCont, status: process.Alive}
 			}
 		}
 		return m, nil, true
@@ -613,13 +613,13 @@ func (m model) updateMainListKey(msg tea.KeyMsg) (model, tea.Cmd, bool) {
 		if len(m.filtered) > 0 && m.cursor < len(m.filtered) {
 			p := m.filtered[m.cursor]
 			// 直接发送 SIGSTOP 信号。
-			return m, sendSignalWithStatus(int(p.Pid), syscall.SIGSTOP, process.Paused), true
+			return m, sendSignalWithStatus(int(p.Pid), sigStop, process.Paused), true
 		}
 	case "r": // 恢复进程
 		if len(m.filtered) > 0 && m.cursor < len(m.filtered) {
 			p := m.filtered[m.cursor]
 			if p.Status == process.Paused {
-				return m, sendSignalWithStatus(int(p.Pid), syscall.SIGCONT, process.Alive), true
+				return m, sendSignalWithStatus(int(p.Pid), sigCont, process.Alive), true
 			}
 		}
 	case "i": // 显示详情
