@@ -6,6 +6,7 @@
     "gokill": "./bin/gokill"
   },
   "scripts": {
+    "prepack": "chmod +x ./bin/gokill || true",
     "postinstall": "node install.js"
   },
   "repository": {
@@ -26,6 +27,11 @@
     "url": "https://github.com/w31r4/gokill/issues"
   },
   "homepage": "https://github.com/w31r4/gokill#readme",
+  "files": [
+    "bin/",
+    "install.js",
+    "README.md"
+  ],
   "publishConfig": {
     "access": "public",
     "provenance": true

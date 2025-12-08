@@ -2,7 +2,6 @@ const fs = require('fs');
 const path = require('path');
 const https = require('https');
 const { execSync } = require('child_process');
-const os = require('os');
 
 const packageJson = require('./package.json');
 const version = packageJson.version;
