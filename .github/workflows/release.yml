@@ -39,6 +39,7 @@ jobs:
           TAP_GITHUB_TOKEN: ${{ secrets.TAP_GITHUB_TOKEN }}
 
   npm-publish:
+    if: false # temporarily disabled: manual npm publish OK, CI hitting 404
     needs: goreleaser
     runs-on: ubuntu-latest
     steps:

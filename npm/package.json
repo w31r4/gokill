@@ -1,6 +1,6 @@
 {
   "name": "@zenfun510/gokill",
-  "version": "1.2.4",
+  "version": "1.2.8",
   "description": "Interactive process killer for Linux, macOS, and Windows.",
   "bin": {
     "gokill": "./bin/gokill"
@@ -34,6 +34,6 @@
   ],
   "publishConfig": {
     "access": "public",
-    "provenance": true
+    "provenance": false
   }
 }
