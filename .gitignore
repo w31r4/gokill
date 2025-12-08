@@ -38,3 +38,4 @@ go.work.sum
 .gopath/
 .gopath/bin/
 .gopath/pkg/
+gokill

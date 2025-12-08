@@ -1,0 +1,33 @@
+{
+  "name": "@zenfun510/gokill",
+  "version": "1.2.4",
+  "description": "Interactive process killer for Linux, macOS, and Windows.",
+  "bin": {
+    "gokill": "./bin/gokill"
+  },
+  "scripts": {
+    "postinstall": "node install.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/w31r4/gokill.git"
+  },
+  "keywords": [
+    "process",
+    "kill",
+    "cli",
+    "interactive",
+    "go",
+    "golang"
+  ],
+  "author": "zenfun510",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/w31r4/gokill/issues"
+  },
+  "homepage": "https://github.com/w31r4/gokill#readme",
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  }
+}

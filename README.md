@@ -2,17 +2,37 @@
 
 **A modern, interactive process killer for macOS & Linux.**
 
+[![Release](https://img.shields.io/github/v/release/w31r4/gokill?style=flat-square)](https://github.com/w31r4/gokill/releases)
+[![npm](https://img.shields.io/npm/v/@zenfun510/gokill?style=flat-square)](https://www.npmjs.com/package/@zenfun510/gokill)
+[![Go Report Card](https://goreportcard.com/badge/github.com/w31r4/gokill?style=flat-square)](https://goreportcard.com/report/github.com/w31r4/gokill)
+
 This project is a complete rewrite and modernization of the original [gkill](https://github.com/heppu/gkill), rebuilt from the ground up with modern Go, [Bubble Tea](https://github.com/charmbracelet/bubbletea), and fuzzy search capabilities.
 
 For a Chinese version of this document, see: `README_zh.md`.
 
 ## Installation
 
+### Homebrew (macOS/Linux)
+
+```sh
+brew install w31r4/tap/gokill
+```
+
+### npm
+
+```sh
+npm install -g @zenfun510/gokill
+```
+
+### Go Install
+
 Ensure you have a working Go environment. You can install `gokill` with `go install`:
 
 ```sh
 go install github.com/w31r4/gokill@latest
 ```
+
+### Build from Source
 
 Alternatively, you can clone the repository and build it from source:
 
