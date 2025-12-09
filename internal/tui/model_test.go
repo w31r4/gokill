@@ -101,7 +101,7 @@ func TestTModeNavigationAndExit(t *testing.T) {
 	if m.dep.mode {
 		t.Errorf("expected depMode to be false after pressing esc")
 	}
-	if m.dep.expanded != nil && len(m.dep.expanded) != 0 {
+	if len(m.dep.expanded) != 0 {
 		t.Errorf("expected depExpanded to be cleared after exiting T-mode")
 	}
 	if m.dep.cursor != 0 {
