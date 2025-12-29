@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/shirou/gopsutil/v3/process"
+	"github.com/w31r4/gokill/internal/why"
 )
 
 // Status represents the state of a process item in the list.
@@ -305,6 +306,46 @@ func GetProcessDetails(pid int) (string, error) {
 	}
 	fmt.Fprintf(&b, "  Exe:\t%s\n", exe)
 	fmt.Fprintf(&b, "  Command:\t%s\n", cmdline)
+
+	// --- Why It Exists Section ---
+	// Analyze process ancestry and source with a 2 second timeout
+	result, analyzeErr := why.AnalyzeWithTimeout(pid, 2*time.Second)
+	if analyzeErr == nil && result != nil {
+		fmt.Fprintf(&b, "\n  ─────────────────────────────────────\n")
+		fmt.Fprintf(&b, "  Why It Exists:\n")
+
+		// Format ancestry chain
+		if len(result.Ancestry) > 0 {
+			fmt.Fprintf(&b, "    %s\n", why.FormatAncestryChain(result.Ancestry))
+		}
+
+		// Source information (always show, even if unknown)
+		sourceStr := string(result.Source.Type)
+		if sourceStr == "" {
+			sourceStr = string(why.SourceUnknown)
+		}
+		if result.Source.Name != "" && result.Source.Name != sourceStr {
+			fmt.Fprintf(&b, "\n  Source:\t%s (%s)\n", result.Source.Name, sourceStr)
+		} else {
+			fmt.Fprintf(&b, "\n  Source:\t%s\n", sourceStr)
+		}
+
+		// Working directory
+		if result.WorkingDir != "" {
+			fmt.Fprintf(&b, "  Working Dir:\t%s\n", result.WorkingDir)
+		}
+
+		// Git information (if available)
+		if result.GitRepo != "" {
+			if result.GitBranch != "" {
+				fmt.Fprintf(&b, "  Git Repo:\t%s (%s)\n", result.GitRepo, result.GitBranch)
+			} else {
+				fmt.Fprintf(&b, "  Git Repo:\t%s\n", result.GitRepo)
+			}
+		}
+
+		fmt.Fprintf(&b, "  ─────────────────────────────────────\n")
+	}
 
 	return b.String(), nil
 }

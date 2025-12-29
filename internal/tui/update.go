@@ -626,6 +626,7 @@ func (m model) updateMainListKey(msg tea.KeyMsg) (model, tea.Cmd, bool) {
 		if len(m.filtered) > 0 && m.cursor < len(m.filtered) {
 			m.showDetails = true
 			m.processDetails = ""
+			m.detailsViewport.SetContent("Loading...")
 			p := m.filtered[m.cursor]
 			return m, getProcessDetails(int(p.Pid)), true
 		}
