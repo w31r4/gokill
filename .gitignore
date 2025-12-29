@@ -39,3 +39,6 @@ go.work.sum
 .gopath/bin/
 .gopath/pkg/
 gokill
+openspec
+.kilocode/
+AGENTS.md
