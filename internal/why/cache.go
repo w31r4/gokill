@@ -137,6 +137,7 @@ func (a *baseAnalyzer) Analyze(ctx context.Context, pid int) (*AnalysisResult, e
 	// Build ancestry chain
 	ancestry, err := buildAncestry(ctx, pid)
 	result.Ancestry = ancestry
+	result.RestartCount = restartCountFromAncestry(ancestry)
 
 	// Get working directory
 	if len(ancestry) > 0 {
@@ -146,6 +147,9 @@ func (a *baseAnalyzer) Analyze(ctx context.Context, pid int) (*AnalysisResult, e
 	// Detect source
 	source := detectSource(ctx, ancestry)
 	result.Source = source
+	if source.Type == SourceDocker && source.Name != "" && source.Name != "container" {
+		result.ContainerID = source.Name
+	}
 
 	// Detect Git context
 	if result.WorkingDir != "" {
@@ -156,6 +160,9 @@ func (a *baseAnalyzer) Analyze(ctx context.Context, pid int) (*AnalysisResult, e
 	if len(ancestry) > 0 {
 		targetProcess := &ancestry[len(ancestry)-1]
 		result.Warnings = HealthCheck(targetProcess)
+	}
+	if shouldWarnRestart(result.RestartCount) {
+		result.Warnings = append(result.Warnings, restartWarning(result.RestartCount))
 	}
 
 	if err != nil {

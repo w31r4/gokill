@@ -32,12 +32,62 @@ func detectContainer(ancestry []ProcessInfo, rootPath string) *Source {
 			strings.Contains(content, "containerd") ||
 			strings.Contains(content, "kubepods") ||
 			strings.Contains(content, "lxc") {
+			containerID := extractContainerID(content)
+			name := "container"
+			if containerID != "" {
+				name = containerID
+			}
 			return &Source{
 				Type:       SourceDocker,
-				Name:       "container",
+				Name:       name,
 				Confidence: 0.9,
 			}
 		}
 	}
 	return nil
+}
+
+func extractContainerID(content string) string {
+	best := ""
+	segments := strings.FieldsFunc(content, func(r rune) bool {
+		return r == '\n' || r == '/' || r == ':' || r == ' '
+	})
+	for _, seg := range segments {
+		id := normalizeContainerSegment(seg)
+		if id == "" {
+			continue
+		}
+		if len(id) > len(best) {
+			best = id
+		}
+	}
+	return best
+}
+
+func normalizeContainerSegment(seg string) string {
+	if seg == "" {
+		return ""
+	}
+	seg = strings.TrimPrefix(seg, "docker-")
+	seg = strings.TrimPrefix(seg, "cri-containerd-")
+	seg = strings.TrimSuffix(seg, ".scope")
+	seg = strings.TrimSpace(seg)
+	if len(seg) < 8 {
+		return ""
+	}
+	if !isHexString(seg) {
+		return ""
+	}
+	return seg
+}
+
+func isHexString(s string) bool {
+	for i := 0; i < len(s); i++ {
+		ch := s[i]
+		if (ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'f') || (ch >= 'A' && ch <= 'F') {
+			continue
+		}
+		return false
+	}
+	return true
 }

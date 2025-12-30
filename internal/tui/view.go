@@ -748,6 +748,8 @@ func detailLabelCell(label string, width int) string {
 	switch label {
 	case "Why It Exists":
 		style = detailTitleStyle
+	case "Context":
+		style = detailTitleStyle
 	case "Warnings":
 		style = warningStyle
 	}
@@ -775,7 +777,13 @@ func detailValueStyleFor(label, value string) lipgloss.Style {
 		return portNumberStyle
 	case "Name", "Command":
 		return commandStyle
-	case "Source", "Working Dir", "Git Repo":
+	case "Target":
+		return commandStyle
+	case "Restart Count":
+		return detailMetricStyle
+	case "Socket State", "Resource", "Files":
+		return detailMetricStyle
+	case "Source", "Working Dir", "Git Repo", "Service", "Container":
 		return normalUserStyle
 	default:
 		return detailValueStyle

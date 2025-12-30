@@ -45,12 +45,14 @@ type Source struct {
 
 // AnalysisResult contains the complete analysis of why a process is running.
 type AnalysisResult struct {
-	Ancestry   []ProcessInfo // Process chain from init to target
-	Source     Source        // Detected process source/supervisor
-	WorkingDir string        // Working directory of target process
-	GitRepo    string        // Git repository name (if applicable)
-	GitBranch  string        // Git branch (if applicable)
-	Warnings   []string      // Health/security warnings
+	Ancestry     []ProcessInfo // Process chain from init to target
+	Source       Source        // Detected process source/supervisor
+	WorkingDir   string        // Working directory of target process
+	GitRepo      string        // Git repository name (if applicable)
+	GitBranch    string        // Git branch (if applicable)
+	RestartCount int           // Consecutive restart count (best-effort)
+	ContainerID  string        // Container identifier (best-effort)
+	Warnings     []string      // Health/security warnings
 }
 
 // Analyzer provides process ancestry analysis.

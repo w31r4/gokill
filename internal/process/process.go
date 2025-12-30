@@ -291,22 +291,25 @@ func GetProcessDetails(pid int) (string, error) {
 	}
 
 	var b strings.Builder
-	fmt.Fprintf(&b, "  PID:\t%d\n", p.Pid)
 	fmt.Fprintf(&b, "  User:\t%s\n", user)
 	fmt.Fprintf(&b, "  Name:\t%s\n", name)
 	fmt.Fprintf(&b, "  %%CPU:\t%.1f\n", cpuPercent)
 	fmt.Fprintf(&b, "  %%MEM:\t%.1f\n", memPercent)
 	fmt.Fprintf(&b, "  Start:\t%s\n", startTime)
+	ports := []uint32(nil)
 	hasPublicListener := false
 	if shouldScanPorts() {
 		ctx, cancel := context.WithTimeout(context.Background(), portScanTimeout())
-		ports, public := getProcessListenerInfoCtx(ctx, p)
+		var public bool
+		ports, public = getProcessListenerInfoCtx(ctx, p)
 		if len(ports) > 0 {
 			fmt.Fprintf(&b, "  Ports:\t%s\n", formatPorts(ports))
 		}
 		hasPublicListener = public
 		cancel()
 	}
+	fmt.Fprintf(&b, "  Target:\t%s\n", formatTargetSummary(name, int(p.Pid), ports))
+	fmt.Fprintf(&b, "  PID:\t%d\n", p.Pid)
 	fmt.Fprintf(&b, "  Exe:\t%s\n", exe)
 	fmt.Fprintf(&b, "  Command:\t%s\n", cmdline)
 
@@ -327,10 +330,23 @@ func GetProcessDetails(pid int) (string, error) {
 		if sourceStr == "" {
 			sourceStr = string(why.SourceUnknown)
 		}
-		if result.Source.Name != "" && result.Source.Name != sourceStr {
-			fmt.Fprintf(&b, "\n  Source:\t%s (%s)\n", result.Source.Name, sourceStr)
+		sourceName := result.Source.Name
+		if result.Source.Type == why.SourceSystemd || result.Source.Type == why.SourceLaunchd {
+			sourceName = ""
+		}
+		if result.Source.Type == why.SourceDocker {
+			sourceName = ""
+		}
+		if sourceName != "" && sourceName != sourceStr {
+			fmt.Fprintf(&b, "\n  Source:\t%s (%s)\n", sourceName, sourceStr)
 		} else {
 			fmt.Fprintf(&b, "\n  Source:\t%s\n", sourceStr)
+		}
+		if (result.Source.Type == why.SourceSystemd || result.Source.Type == why.SourceLaunchd) && result.Source.Name != "" {
+			fmt.Fprintf(&b, "  Service:\t%s\n", result.Source.Name)
+		}
+		if result.ContainerID != "" {
+			fmt.Fprintf(&b, "  Container:\t%s\n", result.ContainerID)
 		}
 
 		// Working directory
@@ -344,6 +360,15 @@ func GetProcessDetails(pid int) (string, error) {
 				fmt.Fprintf(&b, "  Git Repo:\t%s (%s)\n", result.GitRepo, result.GitBranch)
 			} else {
 				fmt.Fprintf(&b, "  Git Repo:\t%s\n", result.GitRepo)
+			}
+		}
+		fmt.Fprintf(&b, "  Restart Count:\t%d\n", result.RestartCount)
+
+		contextLines := buildContextLines(p, ports, hasPublicListener)
+		if len(contextLines) > 0 {
+			fmt.Fprintf(&b, "\n  Context:\n")
+			for _, line := range contextLines {
+				fmt.Fprintf(&b, "  %s\n", line)
 			}
 		}
 
@@ -363,4 +388,74 @@ func GetProcessDetails(pid int) (string, error) {
 	}
 
 	return b.String(), nil
+}
+
+func formatTargetSummary(name string, pid int, ports []uint32) string {
+	trimmed := strings.TrimSpace(name)
+	if trimmed == "" || trimmed == "n/a" {
+		trimmed = "process"
+	}
+	summary := fmt.Sprintf("%s (pid %d)", trimmed, pid)
+	if len(ports) > 0 {
+		summary = fmt.Sprintf("%s, port %d", summary, ports[0])
+		if len(ports) > 1 {
+			summary = fmt.Sprintf("%s (+%d)", summary, len(ports)-1)
+		}
+	}
+	return summary
+}
+
+func buildContextLines(p *process.Process, ports []uint32, hasPublicListener bool) []string {
+	var lines []string
+
+	if state := formatSocketState(ports, hasPublicListener); state != "" {
+		lines = append(lines, fmt.Sprintf("Socket State:\t%s", state))
+	}
+
+	if resource := formatResourceContext(p); resource != "" {
+		lines = append(lines, fmt.Sprintf("Resource:\t%s", resource))
+	}
+
+	if files := formatFileContext(p); files != "" {
+		lines = append(lines, fmt.Sprintf("Files:\t%s", files))
+	}
+
+	return lines
+}
+
+func formatSocketState(ports []uint32, hasPublicListener bool) string {
+	if len(ports) == 0 {
+		return ""
+	}
+	state := fmt.Sprintf("listening %d", len(ports))
+	if hasPublicListener {
+		state += " (public)"
+	}
+	return state
+}
+
+func formatResourceContext(p *process.Process) string {
+	var parts []string
+
+	if memInfo, err := p.MemoryInfo(); err == nil && memInfo != nil && memInfo.RSS > 0 {
+		rssMB := float64(memInfo.RSS) / (1024 * 1024)
+		parts = append(parts, fmt.Sprintf("RSS %.1f MB", rssMB))
+	}
+
+	if threads, err := p.NumThreads(); err == nil && threads > 0 {
+		parts = append(parts, fmt.Sprintf("Threads %d", threads))
+	}
+
+	if len(parts) == 0 {
+		return ""
+	}
+	return strings.Join(parts, " • ")
+}
+
+func formatFileContext(p *process.Process) string {
+	files, err := p.OpenFiles()
+	if err != nil || len(files) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("Open %d", len(files))
 }
