@@ -39,6 +39,8 @@ var (
 	detailLabelStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Bold(true).Width(12).Align(lipgloss.Right)
 	// detailValueStyle 定义了详情视图中值的样式。
 	detailValueStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("255"))
+	// detailMetricStyle 用于详情中的关键指标高亮（CPU/MEM 等）。
+	detailMetricStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("220"))
 	// detailHelpStyle 定义了详情视图底部的帮助文本样式。
 	detailHelpStyle = faintStyle.Copy().MarginTop(1)
 	// errorTitleStyle, errorPaneStyle, errorHelpStyle, errorMessageStyle 定义了错误覆盖层的各种样式。
@@ -452,7 +454,6 @@ func formatProcessDetails(details string, viewportContentWidth int) string {
 	}
 
 	labelWidth := computeDetailLabelWidth(lines, contentWidth)
-	labelStyle := detailLabelStyle.Copy().Width(labelWidth).Align(lipgloss.Right)
 
 	valueColumnStart := labelWidth + 1 // label cell + 1 space
 	valueWidth := contentWidth - valueColumnStart
@@ -476,7 +477,7 @@ func formatProcessDetails(details string, viewportContentWidth int) string {
 
 		// Why It Exists 是一个 section：先输出标题行，再把后续的 ancestry 链按段落输出。
 		if label == "Why It Exists" && strings.TrimSpace(value) == "" {
-			labelCell := labelStyle.Render(label + ":")
+			labelCell := detailLabelCell(label, labelWidth)
 			rows = append(rows, lipgloss.JoinHorizontal(lipgloss.Top, labelCell, " ", ""))
 			inWhy = true
 			continue
@@ -495,7 +496,7 @@ func formatProcessDetails(details string, viewportContentWidth int) string {
 
 		// Warnings section: 警告图标高亮，原因文本保持白色对齐。
 		if label == "Warnings" && strings.TrimSpace(value) == "" {
-			labelCell := labelStyle.Render(label + ":")
+			labelCell := detailLabelCell(label, labelWidth)
 			rows = append(rows, lipgloss.JoinHorizontal(lipgloss.Top, labelCell, " ", ""))
 			inWarnings = true
 			continue
@@ -521,11 +522,12 @@ func formatProcessDetails(details string, viewportContentWidth int) string {
 			continue
 		}
 
-		labelCell := labelStyle.Render(label + ":")
+		labelCell := detailLabelCell(label, labelWidth)
+		valueStyle := detailValueStyleFor(label, value)
 
 		// 极窄窗口下，valueWidth 可能 <= 0，此时退化为不做 value 列换行。
 		if valueWidth <= 0 {
-			rows = append(rows, lipgloss.JoinHorizontal(lipgloss.Top, labelCell, " ", detailValueStyle.Render(value)))
+			rows = append(rows, lipgloss.JoinHorizontal(lipgloss.Top, labelCell, " ", valueStyle.Render(value)))
 			continue
 		}
 
@@ -534,11 +536,11 @@ func formatProcessDetails(details string, viewportContentWidth int) string {
 			wrapped = []string{""}
 		}
 
-		rows = append(rows, lipgloss.JoinHorizontal(lipgloss.Top, labelCell, " ", detailValueStyle.Render(wrapped[0])))
+		rows = append(rows, lipgloss.JoinHorizontal(lipgloss.Top, labelCell, " ", valueStyle.Render(wrapped[0])))
 
 		continuationPrefix := strings.Repeat(" ", valueColumnStart)
 		for _, cont := range wrapped[1:] {
-			rows = append(rows, continuationPrefix+detailValueStyle.Render(cont))
+			rows = append(rows, continuationPrefix+valueStyle.Render(cont))
 		}
 	}
 
@@ -604,8 +606,9 @@ func formatWhyChain(chainLine string, contentWidth, valueColumnStart int) []stri
 	arrowJoiner := " → "
 	arrowWidth := lipgloss.Width(arrowPrefix)
 
+	whyStyle := detailTitleStyle.Copy().Bold(false)
 	addLine := func(line string) {
-		out = append(out, basePrefix+detailValueStyle.Render(line))
+		out = append(out, basePrefix+whyStyle.Render(line))
 	}
 
 	emitToken := func(prefix string, token string) {
@@ -738,6 +741,45 @@ func formatWarningLine(line string, contentWidth, valueColumnStart int) []string
 		out = append(out, basePrefix+detailValueStyle.Render(part))
 	}
 	return out
+}
+
+func detailLabelCell(label string, width int) string {
+	style := detailLabelStyle
+	switch label {
+	case "Why It Exists":
+		style = detailTitleStyle
+	case "Warnings":
+		style = warningStyle
+	}
+	return style.Copy().Width(width).Align(lipgloss.Right).Render(label + ":")
+}
+
+func detailValueStyleFor(label, value string) lipgloss.Style {
+	switch label {
+	case "PID":
+		return pidStyle
+	case "User":
+		normalized := strings.TrimSpace(value)
+		if strings.EqualFold(normalized, "root") {
+			return rootUserStyle
+		}
+		if normalized == "" || strings.EqualFold(normalized, "n/a") {
+			return detailValueStyle
+		}
+		return normalUserStyle
+	case "%CPU", "%MEM":
+		return detailMetricStyle
+	case "Start":
+		return timeStyle
+	case "Ports":
+		return portNumberStyle
+	case "Name", "Command":
+		return commandStyle
+	case "Source", "Working Dir", "Git Repo":
+		return normalUserStyle
+	default:
+		return detailValueStyle
+	}
 }
 
 func splitWhySegments(chain string) []string {
