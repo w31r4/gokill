@@ -493,7 +493,7 @@ func formatProcessDetails(details string, viewportContentWidth int) string {
 			}
 		}
 
-		// Warnings section: 警告信息使用红色高亮（不依赖告警文案内容）。
+		// Warnings section: 警告图标高亮，原因文本保持白色对齐。
 		if label == "Warnings" && strings.TrimSpace(value) == "" {
 			labelCell := labelStyle.Render(label + ":")
 			rows = append(rows, lipgloss.JoinHorizontal(lipgloss.Top, labelCell, " ", ""))
@@ -508,9 +508,7 @@ func formatProcessDetails(details string, viewportContentWidth int) string {
 			} else if label != "" && label != "Warnings" {
 				inWarnings = false
 			} else if label == "" {
-				for _, wl := range wrapPlainText(strings.TrimSpace(trimmedLeft), contentWidth) {
-					rows = append(rows, warningStyle.Render(wl))
-				}
+				rows = append(rows, formatWarningLine(trimmedLeft, contentWidth, valueColumnStart)...)
 				continue
 			}
 		}
@@ -680,6 +678,65 @@ func formatWhyChain(chainLine string, contentWidth, valueColumnStart int) []stri
 		addLine(current)
 	}
 
+	return out
+}
+
+func formatWarningLine(line string, contentWidth, valueColumnStart int) []string {
+	text := strings.TrimSpace(line)
+	if text == "" {
+		return []string{""}
+	}
+
+	icon := ""
+	message := text
+	if strings.HasPrefix(text, "⚠") {
+		icon = "⚠"
+		message = strings.TrimSpace(strings.TrimPrefix(text, "⚠"))
+	}
+
+	valueWidth := contentWidth - valueColumnStart
+	if valueWidth <= 0 {
+		valueWidth = 1
+	}
+
+	iconWidth := lipgloss.Width(icon)
+	gap := 0
+	if icon != "" {
+		gap = 1
+	}
+	textWidth := valueWidth
+	if iconWidth+gap < valueWidth {
+		textWidth = valueWidth - iconWidth - gap
+	} else {
+		textWidth = 1
+	}
+
+	wrapped := wrapPlainText(message, textWidth)
+	if len(wrapped) == 0 {
+		wrapped = []string{""}
+	}
+
+	basePrefix := strings.Repeat(" ", valueColumnStart)
+	var out []string
+
+	if icon != "" {
+		line0 := basePrefix + warningStyle.Render(icon)
+		if gap > 0 {
+			line0 += " "
+		}
+		line0 += detailValueStyle.Render(wrapped[0])
+		out = append(out, line0)
+
+		contPrefix := basePrefix + strings.Repeat(" ", iconWidth+gap)
+		for _, part := range wrapped[1:] {
+			out = append(out, contPrefix+detailValueStyle.Render(part))
+		}
+		return out
+	}
+
+	for _, part := range wrapped {
+		out = append(out, basePrefix+detailValueStyle.Render(part))
+	}
 	return out
 }
 
