@@ -1,6 +1,6 @@
 # gokill
 
-Interactive process killer for Linux, macOS, and Windows.
+Interactive process killer for Linux and macOS.
 
 ## Installation
 
