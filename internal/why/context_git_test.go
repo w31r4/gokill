@@ -45,6 +45,12 @@ func TestDetectGitInfo(t *testing.T) {
 		t.Errorf("expected branch 'main' from subdir, got '%s'", branch)
 	}
 
+	// Case 2b: Repeated lookup should remain stable (and exercises cache paths).
+	repo2, branch2 := detectGitInfo(subDir)
+	if repo2 != "myrepo" || branch2 != "main" {
+		t.Errorf("expected repeated lookup to return 'myrepo','main', got '%s','%s'", repo2, branch2)
+	}
+
 	// Case 3: Detached HEAD
 	detachedDir := filepath.Join(tmpDir, "detached")
 	dGitDir := filepath.Join(detachedDir, ".git")
