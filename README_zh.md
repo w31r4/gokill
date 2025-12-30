@@ -1,10 +1,44 @@
 # gokill（中文文档）
 
-**一款适用于 macOS 和 Linux 的现代交互式进程管理/杀进程工具。**
+**一款适用于 macOS 和 Linux 的现代交互式进程管理/杀进程工具，集成「进程溯源分析」功能。**
 
 `gokill` 基于 Go 与 [Bubble Tea](https://github.com/charmbracelet/bubbletea) 构建，支持模糊搜索、端口过滤以及进程依赖树（T 模式）等功能。
 
 > 提示：本项目的交互界面目前仍以英文为主，本文档主要帮助你快速理解功能与键位。
+
+## 「为什么这个进程在运行？」（Why Is This Running）
+
+gokill 集成了受 [witr (why-is-this-running)](https://github.com/pranshuparmar/witr) 项目启发的**进程溯源分析**能力，帮助你理解的不仅是*什么*在运行，更是*为什么*它会存在。
+
+### 核心能力
+
+| 功能 | 说明 |
+|------|------|
+| **进程祖先链** | 从 init/systemd 到目标进程的完整父子链追溯 |
+| **来源检测** | 识别进程的管理者/启动器（systemd、launchd、Docker、PM2、supervisor、cron、shell） |
+| **容器感知** | 检测进程是否运行在 Docker、containerd、Kubernetes 或 LXC 容器中 |
+| **Git 上下文** | 当进程从 Git 目录运行时，显示仓库名和分支 |
+| **健康警告** | 提示僵尸进程、root 执行、高内存占用、长时间运行等风险 |
+
+### 示例：进程详情视图
+
+在选中进程后按 `i` 键，gokill 会显示：
+
+```
+PID       : 14233
+User      : pm2
+Command   : node index.js
+Started   : 2 days ago
+
+Why It Exists:
+  systemd (pid 1) → pm2 (pid 5034) → node (pid 14233)
+
+Source    : pm2
+Git Repo  : expense-manager (main)
+Warnings  : Process is running as root
+```
+
+这在故障排查时尤其有用——你可以快速理解一个运行中进程的责任链。
 
 ## 安装
 
@@ -122,6 +156,18 @@ gokill
 | `connection scan timeout`（启用端口扫描时） | 端口扫描超时或被防火墙/安全策略拦截。 | 增大 `GOKILL_PORT_TIMEOUT_MS` 或关闭端口扫描。 |
 
 在 UI 中，错误会以红色面板（Error overlay）形式显示，下方提示 `esc: dismiss • q: quit`，可以直接关闭错误继续操作，无需重启程序。
+
+## 相关项目
+
+- [gkill](https://github.com/heppu/gkill) - 本项目的原始版本。
+- [fkill-cli](https://github.com/sindresorhus/fkill-cli) - 一款优秀的 Node.js 进程管理工具。
+- [witr](https://github.com/pranshuparmar/witr) - "Why Is This Running" 项目，启发了我们的进程溯源分析功能。
+
+## 致谢
+
+特别感谢 [**witr (why-is-this-running)**](https://github.com/pranshuparmar/witr) 项目及其作者 [@pranshuparmar](https://github.com/pranshuparmar)。gokill 的 `internal/why` 模块深受 witr 核心理念的启发——通过构建因果链来解释进程为何存在。witr 将进程因果关系显性化的哲学——不仅回答*什么*在运行，更回答*为什么*在运行——直接影响了我们的进程详情和祖先链分析功能的设计。
+
+> *"当系统上有东西在运行时，必有原因。witr 让这种因果关系变得清晰可见。"*
 
 ## License
 
