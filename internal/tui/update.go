@@ -81,8 +81,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// 消息2: 单个进程的详细信息已加载。
 	case processDetailsMsg:
 		m.processDetails = string(msg) // 更新模型中的详情字符串。
-		// 格式化详情内容并设置给 viewport
-		formattedDetails := formatProcessDetails(m.processDetails)
+
+		// 使用 viewport 内容区域宽度做格式化（考虑 viewport.Style 的 padding）。
+		vpHFrame, _ := m.detailsViewport.Style.GetFrameSize()
+		contentWidth := m.detailsViewport.Width - vpHFrame
+		formattedDetails := formatProcessDetails(m.processDetails, contentWidth)
 
 		// 按内容行数收缩详情 viewport 的高度，避免面板“又大又空”。
 		lines := strings.Split(formattedDetails, "\n")
@@ -100,22 +103,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.detailsViewport.Height = contentHeight
 		}
 
-		// 同理，按内容宽度适当收缩 viewport 宽度（不超过 WindowSizeMsg 计算的上限）。
-		maxWidth := m.detailsViewport.Width
-		contentWidth := 0
-		for _, ln := range lines {
-			if w := lipgloss.Width(ln); w > contentWidth {
-				contentWidth = w
-			}
-		}
-		if contentWidth > 0 {
-			if maxWidth > 0 && contentWidth > maxWidth {
-				m.detailsViewport.Width = maxWidth
-			} else if maxWidth == 0 || contentWidth < maxWidth {
-				m.detailsViewport.Width = contentWidth
-			}
-		}
-
+		// 不按内容宽度收缩 viewport：保持 WindowSizeMsg 计算出的宽度，避免长行更易溢出。
 		m.detailsViewport.SetContent(formattedDetails)
 		m.detailsViewport.GotoTop()
 		return m, nil // 无需执行新的命令。

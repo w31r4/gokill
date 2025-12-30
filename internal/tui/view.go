@@ -435,33 +435,326 @@ func (m model) renderHelpView() string {
 }
 
 // formatProcessDetails 是一个辅助函数，它接收 `GetProcessDetails` 返回的原始详情字符串，
-// 并将其解析、格式化为一个美观的、带标签对齐的视图。
-func formatProcessDetails(details string) string {
-	lines := strings.Split(strings.TrimSpace(details), "\n")
+// 并将其解析、格式化为一个美观的、带标签对齐且可自动换行的视图。
+// viewportContentWidth 为 viewport 内容区域宽度（建议传入 viewport.Width 减去 viewport.Style 的水平 frame）。
+func formatProcessDetails(details string, viewportContentWidth int) string {
+	raw := strings.TrimRight(details, "\n")
+	lines := strings.Split(raw, "\n")
 	if len(lines) == 0 {
 		return faintStyle.Render("(no details)")
 	}
 
+	contentWidth := viewportContentWidth
+	if contentWidth <= 0 {
+		contentWidth = 80
+	}
+
+	labelWidth := computeDetailLabelWidth(lines, contentWidth)
+	labelStyle := detailLabelStyle.Copy().Width(labelWidth).Align(lipgloss.Right)
+
+	valueColumnStart := labelWidth + 1 // label cell + 1 space
+	valueWidth := contentWidth - valueColumnStart
+
 	var rows []string
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			rows = append(rows, "") // 保留空行以维持格式。
+	inWhy := false
+
+	for _, rawLine := range lines {
+		// 只去掉行末空白，保留缩进信息用于判断 section/块内容。
+		line := strings.TrimRight(rawLine, " \t\r")
+		if strings.TrimSpace(line) == "" {
+			rows = append(rows, "")
+			inWhy = false
 			continue
 		}
-		// 将 "Key: Value" 格式的行分割开。
-		label, value := splitDetailLine(line)
+
+		trimmedLeft := strings.TrimLeft(line, " \t")
+		label, value := splitDetailLine(trimmedLeft)
+
+		// Why It Exists 是一个 section：先输出标题行，再把后续的 ancestry 链按段落输出。
+		if label == "Why It Exists" && strings.TrimSpace(value) == "" {
+			labelCell := labelStyle.Render(label + ":")
+			rows = append(rows, lipgloss.JoinHorizontal(lipgloss.Top, labelCell, " ", ""))
+			inWhy = true
+			continue
+		}
+
+		// Why section 的主体：按 `→` 分段换行；段内超长再折行。
+		if inWhy {
+			rows = append(rows, formatWhyChain(trimmedLeft, contentWidth, valueColumnStart)...)
+			continue
+		}
+
+		// 非 Key/Value 行：作为普通文本渲染并自动换行（不做标签对齐）。
 		if label == "" {
-			rows = append(rows, detailValueStyle.Render(value))
+			for _, wl := range wrapPlainText(strings.TrimSpace(trimmedLeft), contentWidth) {
+				rows = append(rows, detailValueStyle.Render(wl))
+			}
 			continue
 		}
-		// 使用 lipgloss 样式分别渲染标签和值，然后水平拼接它们。
-		labelCell := detailLabelStyle.Render(label + ":")
-		valueCell := detailValueStyle.Render(value)
-		rows = append(rows, lipgloss.JoinHorizontal(lipgloss.Top, labelCell, " ", valueCell))
+
+		labelCell := labelStyle.Render(label + ":")
+
+		// 极窄窗口下，valueWidth 可能 <= 0，此时退化为不做 value 列换行。
+		if valueWidth <= 0 {
+			rows = append(rows, lipgloss.JoinHorizontal(lipgloss.Top, labelCell, " ", detailValueStyle.Render(value)))
+			continue
+		}
+
+		wrapped := wrapPlainText(value, valueWidth)
+		if len(wrapped) == 0 {
+			wrapped = []string{""}
+		}
+
+		rows = append(rows, lipgloss.JoinHorizontal(lipgloss.Top, labelCell, " ", detailValueStyle.Render(wrapped[0])))
+
+		continuationPrefix := strings.Repeat(" ", valueColumnStart)
+		for _, cont := range wrapped[1:] {
+			rows = append(rows, continuationPrefix+detailValueStyle.Render(cont))
+		}
 	}
 
 	return strings.Join(rows, "\n")
+}
+
+func computeDetailLabelWidth(lines []string, contentWidth int) int {
+	// 标签列：最小 12，必要时增大，但不能挤占掉 value 列（至少留 1 列）。
+	maxPossible := contentWidth - 1
+	if maxPossible < 1 {
+		maxPossible = 1
+	}
+
+	minWidth := minInt(12, maxPossible)
+	maxWidth := minInt(24, maxPossible)
+
+	width := minWidth
+	for _, rawLine := range lines {
+		line := strings.TrimRight(rawLine, " \t\r")
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		trimmedLeft := strings.TrimLeft(line, " \t")
+		label, _ := splitDetailLine(trimmedLeft)
+		if label == "" {
+			continue
+		}
+		lw := lipgloss.Width(label + ":")
+		if lw > width {
+			width = lw
+		}
+	}
+
+	if width < minWidth {
+		width = minWidth
+	}
+	if width > maxWidth {
+		width = maxWidth
+	}
+	return width
+}
+
+func formatWhyChain(chainLine string, contentWidth, valueColumnStart int) []string {
+	chain := strings.TrimSpace(chainLine)
+	if chain == "" {
+		return nil
+	}
+
+	valueWidth := contentWidth - valueColumnStart
+	if valueWidth <= 0 {
+		valueWidth = 1
+	}
+
+	segments := splitWhySegments(chain)
+	if len(segments) == 0 {
+		segments = []string{chain}
+	}
+
+	basePrefix := strings.Repeat(" ", valueColumnStart)
+	var out []string
+
+	arrowPrefix := "→ "
+	arrowJoiner := " → "
+	arrowWidth := lipgloss.Width(arrowPrefix)
+
+	addLine := func(line string) {
+		out = append(out, basePrefix+detailValueStyle.Render(line))
+	}
+
+	emitToken := func(prefix string, token string) {
+		line := prefix + token
+		if lipgloss.Width(line) <= valueWidth {
+			addLine(line)
+			return
+		}
+
+		// 单个 token 本身超出宽度时：不得已按字符硬切（仍保证不在词间分离）。
+		tokenWidth := valueWidth - lipgloss.Width(prefix)
+		if tokenWidth < 1 {
+			tokenWidth = 1
+		}
+		parts := splitLongToken(token, tokenWidth)
+		if len(parts) == 0 {
+			addLine(prefix)
+			return
+		}
+		addLine(prefix + parts[0])
+
+		// 续行保持缩进到 prefix 的长度，避免字符切分时视觉跳动。
+		contPrefix := strings.Repeat(" ", lipgloss.Width(prefix))
+		for _, p := range parts[1:] {
+			addLine(contPrefix + p)
+		}
+	}
+
+	current := ""
+	for i, seg := range segments {
+		seg = strings.TrimSpace(seg)
+		if seg == "" {
+			continue
+		}
+
+		// 首个 token：不带箭头前缀。
+		if current == "" && i == 0 {
+			if lipgloss.Width(seg) > valueWidth {
+				emitToken("", seg)
+				continue
+			}
+			current = seg
+			continue
+		}
+
+		if current == "" {
+			emitToken(arrowPrefix, seg)
+			continue
+		}
+
+		candidate := current + arrowJoiner + seg
+		if lipgloss.Width(candidate) <= valueWidth {
+			current = candidate
+			continue
+		}
+
+		// 换行边界：仅在 token 之间断行，不拆 token。
+		addLine(current)
+		current = ""
+
+		// 新行从箭头开始（表示继续链路）。
+		if lipgloss.Width(arrowPrefix+seg) > valueWidth && lipgloss.Width(seg) > valueWidth-arrowWidth {
+			emitToken(arrowPrefix, seg)
+			continue
+		}
+		current = arrowPrefix + seg
+	}
+
+	if strings.TrimSpace(current) != "" {
+		addLine(current)
+	}
+
+	return out
+}
+
+func splitWhySegments(chain string) []string {
+	// 允许 `a → b → c` 与 `a→b→c` 两种格式。
+	if strings.Contains(chain, "→") {
+		parts := strings.Split(chain, "→")
+		out := make([]string, 0, len(parts))
+		for _, p := range parts {
+			if s := strings.TrimSpace(p); s != "" {
+				out = append(out, s)
+			}
+		}
+		return out
+	}
+	return []string{chain}
+}
+
+func wrapPlainText(text string, width int) []string {
+	txt := strings.TrimSpace(text)
+	if txt == "" {
+		return []string{""}
+	}
+	if width <= 0 {
+		return []string{txt}
+	}
+
+	words := strings.Fields(txt)
+
+	var lines []string
+	var current string
+
+	flush := func() {
+		if current != "" {
+			lines = append(lines, current)
+			current = ""
+		}
+	}
+
+	for _, word := range words {
+		parts := []string{word}
+		if lipgloss.Width(word) > width {
+			parts = splitLongToken(word, width)
+		}
+
+		for _, part := range parts {
+			if current == "" {
+				current = part
+				continue
+			}
+			candidate := current + " " + part
+			if lipgloss.Width(candidate) <= width {
+				current = candidate
+				continue
+			}
+			flush()
+			current = part
+		}
+	}
+
+	flush()
+	return lines
+}
+
+func splitLongToken(token string, width int) []string {
+	if width <= 0 {
+		return []string{token}
+	}
+
+	var out []string
+	var b strings.Builder
+	curWidth := 0
+
+	flush := func() {
+		if b.Len() > 0 {
+			out = append(out, b.String())
+			b.Reset()
+			curWidth = 0
+		}
+	}
+
+	for _, r := range token {
+		ch := string(r)
+		w := lipgloss.Width(ch)
+
+		if curWidth > 0 && curWidth+w > width {
+			flush()
+		}
+
+		b.WriteString(ch)
+		curWidth += w
+
+		if curWidth >= width {
+			flush()
+		}
+	}
+
+	flush()
+	return out
+}
+
+func minInt(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 // splitDetailLine 是一个健壮的辅助函数，用于将详情行分割为标签和值。
