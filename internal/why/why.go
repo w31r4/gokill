@@ -38,10 +38,9 @@ const (
 
 // Source represents the detected origin/supervisor of a process.
 type Source struct {
-	Type       SourceType        // The type of source (systemd, launchd, etc.)
-	Name       string            // Service/unit name if available
-	Confidence float64           // Confidence score 0.0-1.0
-	Details    map[string]string // Additional metadata
+	Type       SourceType // The type of source (systemd, launchd, etc.)
+	Name       string     // Service/unit name if available
+	Confidence float64    // Confidence score 0.0-1.0
 }
 
 // AnalysisResult contains the complete analysis of why a process is running.

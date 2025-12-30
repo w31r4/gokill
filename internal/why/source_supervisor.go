@@ -2,6 +2,7 @@ package why
 
 import (
 	"strings"
+	"unicode"
 )
 
 var knownSupervisors = map[string]string{
@@ -27,8 +28,10 @@ var knownSupervisors = map[string]string{
 func detectSupervisor(ancestry []ProcessInfo) *Source {
 	for _, p := range ancestry {
 		// Normalize: remove spaces, lowercase
-		pname := strings.ReplaceAll(strings.ToLower(p.Command), " ", "")
-		pcmd := strings.ReplaceAll(strings.ToLower(p.Cmdline), " ", "")
+		pname := normalizeSupervisorToken(p.Command)
+		pcmd := normalizeSupervisorToken(p.Cmdline)
+		cmdLower := strings.ToLower(p.Command)
+		cmdlineLower := strings.ToLower(p.Cmdline)
 
 		// PM2 Specific Check
 		if strings.Contains(pname, "pm2") || strings.Contains(pcmd, "pm2") {
@@ -40,7 +43,7 @@ func detectSupervisor(ancestry []ProcessInfo) *Source {
 		}
 
 		// Exact command match
-		if label, ok := knownSupervisors[strings.ToLower(p.Command)]; ok {
+		if label, ok := knownSupervisors[cmdLower]; ok {
 			return &Source{
 				Type:       SourceSupervisor,
 				Name:       label,
@@ -50,7 +53,7 @@ func detectSupervisor(ancestry []ProcessInfo) *Source {
 
 		// Cmdline keyword match
 		for sup, label := range knownSupervisors {
-			if strings.Contains(strings.ToLower(p.Cmdline), sup) {
+			if strings.Contains(cmdlineLower, sup) {
 				return &Source{
 					Type:       SourceSupervisor,
 					Name:       label,
@@ -60,4 +63,20 @@ func detectSupervisor(ancestry []ProcessInfo) *Source {
 		}
 	}
 	return nil
+}
+
+func normalizeSupervisorToken(s string) string {
+	if s == "" {
+		return ""
+	}
+
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, r := range s {
+		if unicode.IsSpace(r) {
+			continue
+		}
+		b.WriteRune(unicode.ToLower(r))
+	}
+	return b.String()
 }

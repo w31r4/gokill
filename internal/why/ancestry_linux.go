@@ -13,7 +13,7 @@ import (
 )
 
 // readProcessInfo reads process information from /proc filesystem.
-func readProcessInfo(ctx context.Context, pid int) (ProcessInfo, error) {
+func readProcessInfo(ctx context.Context, pid int, includeWorkingDir bool) (ProcessInfo, error) {
 	info := ProcessInfo{PID: pid}
 
 	if err := ctx.Err(); err != nil {
@@ -79,10 +79,12 @@ func readProcessInfo(ctx context.Context, pid int) (ProcessInfo, error) {
 		info.Cmdline = strings.TrimSpace(cmdline)
 	}
 
-	// Read working directory
-	cwdPath := fmt.Sprintf("/proc/%d/cwd", pid)
-	if cwd, err := os.Readlink(cwdPath); err == nil {
-		info.WorkingDir = cwd
+	// Read working directory (target process only)
+	if includeWorkingDir {
+		cwdPath := fmt.Sprintf("/proc/%d/cwd", pid)
+		if cwd, err := os.Readlink(cwdPath); err == nil {
+			info.WorkingDir = cwd
+		}
 	}
 
 	return info, nil

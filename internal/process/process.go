@@ -312,8 +312,8 @@ func GetProcessDetails(pid int) (string, error) {
 
 	// --- Why It Exists Section ---
 	// Analyze process ancestry and source with a 2 second timeout
-	result, analyzeErr := why.AnalyzeWithTimeout(pid, 2*time.Second)
-	if analyzeErr == nil && result != nil {
+	result, _ := why.AnalyzeWithTimeout(pid, 2*time.Second)
+	if result != nil {
 		fmt.Fprintf(&b, "\n  ─────────────────────────────────────\n")
 		fmt.Fprintf(&b, "  Why It Exists:\n")
 

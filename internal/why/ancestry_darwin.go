@@ -12,7 +12,7 @@ import (
 )
 
 // readProcessInfo reads process information using ps command on macOS.
-func readProcessInfo(ctx context.Context, pid int) (ProcessInfo, error) {
+func readProcessInfo(ctx context.Context, pid int, includeWorkingDir bool) (ProcessInfo, error) {
 	info := ProcessInfo{PID: pid}
 
 	// Use ps to get process info
@@ -72,8 +72,10 @@ func readProcessInfo(ctx context.Context, pid int) (ProcessInfo, error) {
 		info.Cmdline = fields[11]
 	}
 
-	// Get working directory using lsof
-	info.WorkingDir = getWorkingDir(ctx, pid)
+	// Get working directory using lsof (target process only)
+	if includeWorkingDir {
+		info.WorkingDir = getWorkingDir(ctx, pid)
+	}
 
 	return info, nil
 }

@@ -25,7 +25,7 @@ type cachedAnalyzer struct {
 	entries  map[cacheKey]*cacheEntry
 	ttl      time.Duration
 	maxSize  int
-	analyzer *baseAnalyzer
+	analyzer Analyzer
 }
 
 // NewCachedAnalyzer creates a new analyzer with result caching.
@@ -43,9 +43,10 @@ func (c *cachedAnalyzer) Analyze(ctx context.Context, pid int) (*AnalysisResult,
 	// Try to get from cache first
 	startTime := getProcessStartTime(pid)
 	key := cacheKey{PID: pid, StartTime: startTime}
+	now := time.Now()
 
 	c.mu.RLock()
-	if entry, ok := c.entries[key]; ok && time.Now().Before(entry.expiresAt) {
+	if entry, ok := c.entries[key]; ok && now.Before(entry.expiresAt) {
 		c.mu.RUnlock()
 		return entry.result, nil
 	}
@@ -54,34 +55,63 @@ func (c *cachedAnalyzer) Analyze(ctx context.Context, pid int) (*AnalysisResult,
 	// Perform analysis
 	result, err := c.analyzer.Analyze(ctx, pid)
 	if err != nil {
-		return nil, err
+		return result, err
 	}
 
 	// Cache the result
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	// Evict expired entries if cache is full
-	if len(c.entries) >= c.maxSize {
-		c.evictExpired()
-	}
-
-	c.entries[key] = &cacheEntry{
-		result:    result,
-		expiresAt: time.Now().Add(c.ttl),
-	}
+	c.cacheResult(key, result, now)
 
 	return result, nil
 }
 
+func (c *cachedAnalyzer) cacheResult(key cacheKey, result *AnalysisResult, now time.Time) {
+	if c.maxSize <= 0 {
+		return
+	}
+
+	// Evict expired entries if cache is full
+	if len(c.entries) >= c.maxSize {
+		c.evictExpired(now)
+	}
+
+	for len(c.entries) >= c.maxSize {
+		c.evictOldest()
+	}
+
+	c.entries[key] = &cacheEntry{
+		result:    result,
+		expiresAt: now.Add(c.ttl),
+	}
+}
+
 // evictExpired removes expired entries from the cache.
 // Must be called with write lock held.
-func (c *cachedAnalyzer) evictExpired() {
-	now := time.Now()
+func (c *cachedAnalyzer) evictExpired(now time.Time) {
 	for key, entry := range c.entries {
 		if now.After(entry.expiresAt) {
 			delete(c.entries, key)
 		}
+	}
+}
+
+func (c *cachedAnalyzer) evictOldest() {
+	var oldestKey cacheKey
+	var oldest time.Time
+	found := false
+
+	for key, entry := range c.entries {
+		if !found || entry.expiresAt.Before(oldest) {
+			oldest = entry.expiresAt
+			oldestKey = key
+			found = true
+		}
+	}
+
+	if found {
+		delete(c.entries, oldestKey)
 	}
 }
 
@@ -130,7 +160,7 @@ func (a *baseAnalyzer) Analyze(ctx context.Context, pid int) (*AnalysisResult, e
 
 	if err != nil {
 		// Return partial result even on error
-		return result, nil
+		return result, err
 	}
 
 	return result, nil

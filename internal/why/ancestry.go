@@ -32,7 +32,7 @@ func buildAncestry(ctx context.Context, pid int) ([]ProcessInfo, error) {
 		seen[current] = true
 
 		// Read process information
-		info, err := readProcessInfo(ctx, current)
+		info, err := readProcessInfo(ctx, current, current == pid)
 		if err != nil {
 			// Stop traversal on error but return what we have
 			break

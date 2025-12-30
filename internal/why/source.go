@@ -8,7 +8,9 @@ import (
 // detectSource attempts to identify the source/supervisor of a process.
 // It checks the ancestry chain for known supervisors.
 func detectSource(ctx context.Context, ancestry []ProcessInfo) Source {
-	_ = ctx
+	if err := ctx.Err(); err != nil {
+		return Source{Type: SourceUnknown, Confidence: 0.0}
+	}
 
 	if len(ancestry) == 0 {
 		return Source{Type: SourceUnknown, Confidence: 0.0}
@@ -19,22 +21,40 @@ func detectSource(ctx context.Context, ancestry []ProcessInfo) Source {
 	var candidates []*Source
 
 	// Phase 2 detectors (best-effort; may return nil on unsupported platforms)
+	if err := ctx.Err(); err != nil {
+		return Source{Type: SourceUnknown, Confidence: 0.0}
+	}
 	if src := detectContainer(ancestry, ""); src != nil {
 		candidates = append(candidates, src)
 	}
+	if err := ctx.Err(); err != nil {
+		return Source{Type: SourceUnknown, Confidence: 0.0}
+	}
 	if src := detectSupervisor(ancestry); src != nil {
 		candidates = append(candidates, src)
+	}
+	if err := ctx.Err(); err != nil {
+		return Source{Type: SourceUnknown, Confidence: 0.0}
 	}
 	if src := detectCron(ancestry); src != nil {
 		candidates = append(candidates, src)
 	}
 
 	// Existing detectors
+	if err := ctx.Err(); err != nil {
+		return Source{Type: SourceUnknown, Confidence: 0.0}
+	}
 	if src := detectSystemdFromAncestry(ancestry); src != nil {
 		candidates = append(candidates, src)
 	}
+	if err := ctx.Err(); err != nil {
+		return Source{Type: SourceUnknown, Confidence: 0.0}
+	}
 	if src := detectLaunchdFromAncestry(ancestry); src != nil {
 		candidates = append(candidates, src)
+	}
+	if err := ctx.Err(); err != nil {
+		return Source{Type: SourceUnknown, Confidence: 0.0}
 	}
 	if src := detectShell(ancestry); src != nil {
 		candidates = append(candidates, src)
@@ -79,7 +99,6 @@ func pickBestSource(candidates []*Source) *Source {
 
 	return best
 }
-
 
 // detectSystemdFromAncestry checks for systemd in the ancestry.
 func detectSystemdFromAncestry(ancestry []ProcessInfo) *Source {

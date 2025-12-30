@@ -28,7 +28,6 @@ func detectContainer(ancestry []ProcessInfo, rootPath string) *Source {
 		content := string(data)
 
 		// Normalize: we only expose a single container SourceType/Name for stable UX/API.
-		// Additional info can be added later via Source.Details when needed.
 		if strings.Contains(content, "docker") ||
 			strings.Contains(content, "containerd") ||
 			strings.Contains(content, "kubepods") ||
