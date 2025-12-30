@@ -46,6 +46,8 @@ var (
 	errorPaneStyle    = paneStyle.Copy().BorderForeground(lipgloss.Color("9")).Width(70).Padding(1, 2)
 	errorHelpStyle    = faintStyle.Copy().MarginTop(1)
 	errorMessageStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))
+	// warningStyle 定义了警告信息的样式（红色，加粗）。
+	warningStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Bold(true)
 	// confirm...Style 定义了确认对话框覆盖层的各种样式。
 	confirmTitleStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("178")).Bold(true)
 	confirmPaneStyle    = paneStyle.Copy().BorderForeground(lipgloss.Color("178")).Width(70).Padding(1, 2)
@@ -457,6 +459,7 @@ func formatProcessDetails(details string, viewportContentWidth int) string {
 
 	var rows []string
 	inWhy := false
+	inWarnings := false
 
 	for _, rawLine := range lines {
 		// 只去掉行末空白，保留缩进信息用于判断 section/块内容。
@@ -464,6 +467,7 @@ func formatProcessDetails(details string, viewportContentWidth int) string {
 		if strings.TrimSpace(line) == "" {
 			rows = append(rows, "")
 			inWhy = false
+			inWarnings = false
 			continue
 		}
 
@@ -480,8 +484,35 @@ func formatProcessDetails(details string, viewportContentWidth int) string {
 
 		// Why section 的主体：按 `→` 分段换行；段内超长再折行。
 		if inWhy {
-			rows = append(rows, formatWhyChain(trimmedLeft, contentWidth, valueColumnStart)...)
+			// 如果遇到空行或新的 section 标题，退出 Why 模式
+			if label != "" && label != "Why It Exists" {
+				inWhy = false
+			} else {
+				rows = append(rows, formatWhyChain(trimmedLeft, contentWidth, valueColumnStart)...)
+				continue
+			}
+		}
+
+		// Warnings section: 警告信息使用红色高亮（不依赖告警文案内容）。
+		if label == "Warnings" && strings.TrimSpace(value) == "" {
+			labelCell := labelStyle.Render(label + ":")
+			rows = append(rows, lipgloss.JoinHorizontal(lipgloss.Top, labelCell, " ", ""))
+			inWarnings = true
 			continue
+		}
+
+		if inWarnings {
+			// 分隔线表示 section 结束（避免把分隔线染成 warning）。
+			if strings.HasPrefix(strings.TrimSpace(trimmedLeft), "─") {
+				inWarnings = false
+			} else if label != "" && label != "Warnings" {
+				inWarnings = false
+			} else if label == "" {
+				for _, wl := range wrapPlainText(strings.TrimSpace(trimmedLeft), contentWidth) {
+					rows = append(rows, warningStyle.Render(wl))
+				}
+				continue
+			}
 		}
 
 		// 非 Key/Value 行：作为普通文本渲染并自动换行（不做标签对齐）。

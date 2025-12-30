@@ -344,6 +344,14 @@ func GetProcessDetails(pid int) (string, error) {
 			}
 		}
 
+		// Warnings
+		if len(result.Warnings) > 0 {
+			fmt.Fprintf(&b, "\n  Warnings:\n")
+			for _, warning := range result.Warnings {
+				fmt.Fprintf(&b, "  ⚠ %s\n", warning)
+			}
+		}
+
 		fmt.Fprintf(&b, "  ─────────────────────────────────────\n")
 	}
 

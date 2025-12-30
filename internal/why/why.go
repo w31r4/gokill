@@ -17,6 +17,8 @@ type ProcessInfo struct {
 	User       string    // Username running the process
 	StartedAt  time.Time // Process start time
 	WorkingDir string    // Current working directory
+	Status     string    // Process status (R, S, Z, etc.)
+	RSS        uint64    // Resident Set Size (bytes)
 }
 
 // SourceType represents the type of process supervisor or launcher.

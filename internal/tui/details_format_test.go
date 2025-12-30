@@ -4,6 +4,9 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/charmbracelet/lipgloss"
+	"github.com/muesli/termenv"
 )
 
 var ansiEscapeRE = regexp.MustCompile(`\x1b\[[0-9;]*m`)
@@ -124,5 +127,43 @@ func TestFormatProcessDetailsWhySegments(t *testing.T) {
 	}
 	if !foundArrowContinuation {
 		t.Fatalf("expected at least one continuation line starting with arrow prefix, got:\n%s", out)
+	}
+}
+
+func TestFormatProcessDetailsWarningsSectionHighlights(t *testing.T) {
+	// Force a color profile so lipgloss emits ANSI sequences in tests.
+	lipgloss.SetColorProfile(termenv.TrueColor)
+
+	details := strings.Join([]string{
+		"  PID:\t123",
+		"",
+		"  ─────────────────────────────────────",
+		"  Why It Exists:",
+		"    systemd (pid 1) → node (pid 123)",
+		"",
+		"  Source:\tsystemd",
+		"",
+		"  Warnings:",
+		"  ⚠ Process is running as root",
+		"  ⚠ Process is using high memory (>1GB RSS)",
+		"",
+		"  ─────────────────────────────────────",
+	}, "\n") + "\n"
+
+	out := formatProcessDetails(details, 60)
+
+	if !strings.Contains(stripANSI(out), "Warnings:") {
+		t.Fatalf("expected output to include Warnings section, got:\n%s", stripANSI(out))
+	}
+
+	foundStyledWarning := false
+	for _, ln := range strings.Split(out, "\n") {
+		if strings.Contains(ln, "⚠") && strings.Contains(ln, "\x1b[") {
+			foundStyledWarning = true
+			break
+		}
+	}
+	if !foundStyledWarning {
+		t.Fatalf("expected at least one warning line to include ANSI styling, got:\n%s", out)
 	}
 }

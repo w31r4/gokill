@@ -121,6 +121,17 @@ func (a *baseAnalyzer) Analyze(ctx context.Context, pid int) (*AnalysisResult, e
 	source := detectSource(ctx, ancestry)
 	result.Source = source
 
+	// Detect Git context
+	if result.WorkingDir != "" {
+		result.GitRepo, result.GitBranch = detectGitInfo(result.WorkingDir)
+	}
+
+	// Perform health checks on the target process
+	if len(ancestry) > 0 {
+		targetProcess := &ancestry[len(ancestry)-1]
+		result.Warnings = HealthCheck(targetProcess)
+	}
+
 	return result, nil
 }
 

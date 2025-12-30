@@ -8,57 +8,78 @@ import (
 // detectSource attempts to identify the source/supervisor of a process.
 // It checks the ancestry chain for known supervisors.
 func detectSource(ctx context.Context, ancestry []ProcessInfo) Source {
+	_ = ctx
+
 	if len(ancestry) == 0 {
 		return Source{Type: SourceUnknown, Confidence: 0.0}
 	}
 
-	// Check for known sources in order of specificity
-	// More specific sources (PM2, Docker) take precedence over generic ones (systemd, shell)
+	// Collect candidates and pick the best one using a stable priority order,
+	// then confidence as a tie-breaker.
+	var candidates []*Source
 
-	// Check for PM2
-	if src := detectPM2(ancestry); src != nil {
-		return *src
+	// Phase 2 detectors (best-effort; may return nil on unsupported platforms)
+	if src := detectContainer(ancestry, ""); src != nil {
+		candidates = append(candidates, src)
+	}
+	if src := detectSupervisor(ancestry); src != nil {
+		candidates = append(candidates, src)
+	}
+	if src := detectCron(ancestry); src != nil {
+		candidates = append(candidates, src)
 	}
 
-	// Check for Docker (placeholder - will be enhanced in Phase 2)
-	// if src := detectDocker(ancestry); src != nil {
-	// 	return *src
-	// }
-
-	// Check for systemd (Linux only)
+	// Existing detectors
 	if src := detectSystemdFromAncestry(ancestry); src != nil {
-		return *src
+		candidates = append(candidates, src)
 	}
-
-	// Check for launchd (macOS only)
 	if src := detectLaunchdFromAncestry(ancestry); src != nil {
-		return *src
+		candidates = append(candidates, src)
+	}
+	if src := detectShell(ancestry); src != nil {
+		candidates = append(candidates, src)
 	}
 
-	// Check for shell (interactive terminal)
-	if src := detectShell(ancestry); src != nil {
-		return *src
+	if best := pickBestSource(candidates); best != nil {
+		return *best
 	}
 
 	return Source{Type: SourceUnknown, Confidence: 0.2}
 }
 
-// detectPM2 checks if the process is managed by PM2.
-func detectPM2(ancestry []ProcessInfo) *Source {
-	for _, p := range ancestry {
-		cmd := strings.ToLower(p.Command)
-		cmdline := strings.ToLower(p.Cmdline)
+func pickBestSource(candidates []*Source) *Source {
+	typePriority := map[SourceType]int{
+		SourceDocker:     0,
+		SourcePM2:        1,
+		SourceSupervisor: 1,
+		SourceCron:       2,
+		SourceSystemd:    3,
+		SourceLaunchd:    3,
+		SourceShell:      4,
+		SourceUnknown:    5,
+	}
 
-		if strings.Contains(cmd, "pm2") || strings.Contains(cmdline, "pm2") {
-			return &Source{
-				Type:       SourcePM2,
-				Name:       "pm2",
-				Confidence: 0.9,
-			}
+	var best *Source
+	bestPriority := typePriority[SourceUnknown]
+
+	for _, candidate := range candidates {
+		if candidate == nil {
+			continue
+		}
+		priority, ok := typePriority[candidate.Type]
+		if !ok {
+			priority = typePriority[SourceUnknown]
+		}
+
+		if best == nil || priority < bestPriority || (priority == bestPriority && candidate.Confidence > best.Confidence) {
+			best = candidate
+			bestPriority = priority
 		}
 	}
-	return nil
+
+	return best
 }
+
 
 // detectSystemdFromAncestry checks for systemd in the ancestry.
 func detectSystemdFromAncestry(ancestry []ProcessInfo) *Source {

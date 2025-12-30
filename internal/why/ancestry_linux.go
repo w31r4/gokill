@@ -38,6 +38,9 @@ func readProcessInfo(pid int) (ProcessInfo, error) {
 		return info, fmt.Errorf("insufficient stat fields")
 	}
 
+	// Field 0: State (R, S, Z, etc.)
+	info.Status = fields[0]
+
 	// Field 1 (0-indexed after command): PPID
 	ppid, _ := strconv.Atoi(fields[1])
 	info.PPID = ppid
@@ -45,6 +48,10 @@ func readProcessInfo(pid int) (ProcessInfo, error) {
 	// Field 19: starttime (in clock ticks since boot)
 	startTicks, _ := strconv.ParseInt(fields[19], 10, 64)
 	info.StartedAt = bootTime().Add(time.Duration(startTicks) * time.Second / ticksPerSecond())
+
+	// Field 21: rss (in pages)
+	rssPages, _ := strconv.ParseUint(fields[21], 10, 64)
+	info.RSS = rssPages * uint64(os.Getpagesize())
 
 	// Read username
 	info.User = readUser(pid)
