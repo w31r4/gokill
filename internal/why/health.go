@@ -5,11 +5,14 @@ import (
 	"time"
 )
 
-// HealthCheck checks the health of a process and returns a list of warnings.
-//
-// Note: Some Phase 2 checks (e.g. public listener, high CPU time) require
-// additional input that is not currently part of ProcessInfo, so they are
-// intentionally not implemented here yet.
+/*
+HealthCheck checks the health of a process and returns a list of warnings.
+
+Notes:
+- High CPU time is implemented via ProcessInfo.CPUTime (best-effort, platform-dependent).
+- Public listener detection depends on bind address (0.0.0.0/::) and currently lives in
+  the process/port-scanning layer (see internal/process), not in internal/why.
+*/
 func HealthCheck(p *ProcessInfo) []string {
 	var warnings []string
 	if p == nil {
