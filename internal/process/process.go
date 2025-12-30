@@ -171,7 +171,7 @@ func GetProcesses() ([]*Item, []error, error) {
 				if scanPorts {
 					// 为单个进程的连接采集设定一个短超时，避免卡顿拖慢整体。
 					ctx, cancel := context.WithTimeout(context.Background(), portScanTimeout())
-					ports = getProcessPortsCtx(ctx, p)
+					ports, _ = getProcessListenerInfoCtx(ctx, p)
 					cancel()
 				}
 
@@ -297,11 +297,14 @@ func GetProcessDetails(pid int) (string, error) {
 	fmt.Fprintf(&b, "  %%CPU:\t%.1f\n", cpuPercent)
 	fmt.Fprintf(&b, "  %%MEM:\t%.1f\n", memPercent)
 	fmt.Fprintf(&b, "  Start:\t%s\n", startTime)
+	hasPublicListener := false
 	if shouldScanPorts() {
 		ctx, cancel := context.WithTimeout(context.Background(), portScanTimeout())
-		if ports := getProcessPortsCtx(ctx, p); len(ports) > 0 {
+		ports, public := getProcessListenerInfoCtx(ctx, p)
+		if len(ports) > 0 {
 			fmt.Fprintf(&b, "  Ports:\t%s\n", formatPorts(ports))
 		}
+		hasPublicListener = public
 		cancel()
 	}
 	fmt.Fprintf(&b, "  Exe:\t%s\n", exe)
@@ -345,9 +348,14 @@ func GetProcessDetails(pid int) (string, error) {
 		}
 
 		// Warnings
-		if len(result.Warnings) > 0 {
+		warnings := result.Warnings
+		if hasPublicListener {
+			warnings = append(warnings, "Process is listening on a public interface (0.0.0.0/::)")
+		}
+
+		if len(warnings) > 0 {
 			fmt.Fprintf(&b, "\n  Warnings:\n")
-			for _, warning := range result.Warnings {
+			for _, warning := range warnings {
 				fmt.Fprintf(&b, "  ⚠ %s\n", warning)
 			}
 		}

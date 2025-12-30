@@ -10,15 +10,16 @@ import (
 
 // ProcessInfo contains information about a single process in the ancestry chain.
 type ProcessInfo struct {
-	PID        int       // Process ID
-	PPID       int       // Parent Process ID
-	Command    string    // Short command name (e.g., "node")
-	Cmdline    string    // Full command line
-	User       string    // Username running the process
-	StartedAt  time.Time // Process start time
-	WorkingDir string    // Current working directory
-	Status     string    // Process status (R, S, Z, etc.)
-	RSS        uint64    // Resident Set Size (bytes)
+	PID        int           // Process ID
+	PPID       int           // Parent Process ID
+	Command    string        // Short command name (e.g., "node")
+	Cmdline    string        // Full command line
+	User       string        // Username running the process
+	StartedAt  time.Time     // Process start time
+	WorkingDir string        // Current working directory
+	Status     string        // Process status (R, S, Z, etc.)
+	RSS        uint64        // Resident Set Size (bytes)
+	CPUTime    time.Duration // Total CPU time consumed (best-effort)
 }
 
 // SourceType represents the type of process supervisor or launcher.

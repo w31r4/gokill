@@ -27,18 +27,20 @@ func getProcessPorts(p *process.Process) []uint32 {
 // getProcessPortsCtx 是实际执行端口采集的核心函数。
 // 它接收一个上下文（`context.Context`）和一个进程对象（`*process.Process`），
 // 返回该进程正在监听的所有端口号的唯一、有序列表。
-func getProcessPortsCtx(ctx context.Context, p *process.Process) []uint32 {
+func getProcessListenerInfoCtx(ctx context.Context, p *process.Process) ([]uint32, bool) {
 	// 调用 `gopsutil` 库的 `ConnectionsWithContext` 方法获取进程的所有网络连接。
 	// 传入的 `ctx` 参数使得这个 potentially long-running 操作可以被中断（例如，因超时）。
 	conns, err := p.ConnectionsWithContext(ctx)
 	if err != nil {
 		// 如果在获取连接时发生错误（如权限问题或进程已退出），则返回 nil。
-		return nil
+		return nil, false
 	}
 
 	// 使用 map 来存储唯一的端口号，`struct{}` 作为值是一个零字节的占位符，
 	// 这种方式比使用 `map[uint32]bool` 更节省内存。
 	unique := make(map[uint32]struct{})
+	hasPublicListener := false
+
 	for _, conn := range conns {
 		// 我们只关心本地地址的端口。如果端口号为0，则忽略。
 		if conn.Laddr.Port == 0 {
@@ -50,13 +52,18 @@ func getProcessPortsCtx(ctx context.Context, p *process.Process) []uint32 {
 		if conn.Status != "LISTEN" && conn.Status != "NONE" && conn.Status != "" {
 			continue
 		}
-		// 将有效的监听端口号存入 map。
+
 		unique[conn.Laddr.Port] = struct{}{}
+
+		ip := strings.TrimSpace(conn.Laddr.IP)
+		if ip == "" || ip == "0.0.0.0" || ip == "::" || ip == ":::" {
+			hasPublicListener = true
+		}
 	}
 
 	// 如果没有找到任何监听端口，直接返回 nil。
 	if len(unique) == 0 {
-		return nil
+		return nil, false
 	}
 
 	// 将 map 中的唯一端口号转换成一个切片。
@@ -70,6 +77,11 @@ func getProcessPortsCtx(ctx context.Context, p *process.Process) []uint32 {
 		return ports[i] < ports[j]
 	})
 
+	return ports, hasPublicListener
+}
+
+func getProcessPortsCtx(ctx context.Context, p *process.Process) []uint32 {
+	ports, _ := getProcessListenerInfoCtx(ctx, p)
 	return ports
 }
 

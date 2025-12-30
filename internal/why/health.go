@@ -40,6 +40,11 @@ func HealthCheck(p *ProcessInfo) []string {
 		}
 	}
 
+	// High accumulated CPU time (> 2 hours).
+	if p.CPUTime > 2*time.Hour {
+		warnings = append(warnings, "Process has high accumulated CPU time (>2h)")
+	}
+
 	// High memory usage (RSS > 1 GiB).
 	const highMemThreshold = 1024 * 1024 * 1024
 	if p.RSS > highMemThreshold {

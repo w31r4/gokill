@@ -72,3 +72,21 @@ func TestHealthCheck_RootAndLongRunningAndHighMemory(t *testing.T) {
 		t.Fatalf("expected high memory warning, got %v", warnings)
 	}
 }
+
+func TestHealthCheck_HighCPUTime(t *testing.T) {
+	p := &ProcessInfo{
+		CPUTime: 2*time.Hour + time.Second,
+	}
+	warnings := HealthCheck(p)
+
+	found := false
+	for _, w := range warnings {
+		if w == "Process has high accumulated CPU time (>2h)" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected high CPU time warning, got %v", warnings)
+	}
+}

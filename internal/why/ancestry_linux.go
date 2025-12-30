@@ -45,9 +45,18 @@ func readProcessInfo(pid int) (ProcessInfo, error) {
 	ppid, _ := strconv.Atoi(fields[1])
 	info.PPID = ppid
 
+	// Field 11/12: utime/stime (clock ticks)
+	utimeTicks, _ := strconv.ParseInt(fields[11], 10, 64)
+	stimeTicks, _ := strconv.ParseInt(fields[12], 10, 64)
+	if hz := ticksPerSecond(); hz > 0 {
+		info.CPUTime = time.Duration(utimeTicks+stimeTicks) * time.Second / time.Duration(hz)
+	}
+
 	// Field 19: starttime (in clock ticks since boot)
 	startTicks, _ := strconv.ParseInt(fields[19], 10, 64)
-	info.StartedAt = bootTime().Add(time.Duration(startTicks) * time.Second / ticksPerSecond())
+	if hz := ticksPerSecond(); hz > 0 {
+		info.StartedAt = bootTime().Add(time.Duration(startTicks) * time.Second / time.Duration(hz))
+	}
 
 	// Field 21: rss (in pages)
 	rssPages, _ := strconv.ParseUint(fields[21], 10, 64)
@@ -93,7 +102,10 @@ func getProcessStartTimePlatform(pid int) int64 {
 	}
 
 	startTicks, _ := strconv.ParseInt(fields[19], 10, 64)
-	return bootTime().Add(time.Duration(startTicks) * time.Second / ticksPerSecond()).Unix()
+	if hz := ticksPerSecond(); hz > 0 {
+		return bootTime().Add(time.Duration(startTicks) * time.Second / time.Duration(hz)).Unix()
+	}
+	return 0
 }
 
 // readUser reads the username for a process.
@@ -162,7 +174,7 @@ func bootTime() time.Time {
 }
 
 // ticksPerSecond returns the system clock ticks per second.
-func ticksPerSecond() time.Duration {
-	// Standard value on Linux
+func ticksPerSecond() int64 {
+	// Typical value on Linux (USER_HZ). Best-effort, sufficient for coarse health warnings.
 	return 100
 }
