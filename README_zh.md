@@ -90,6 +90,13 @@ gokill
 - 会显示：PID、用户、CPU/MEM 使用率、启动时间、命令行，以及（可选）监听端口。
 - 按 `esc` 返回主列表。
 
+详情视图中可能出现的补充字段：
+- `Target`：统一的目标摘要（名称 + PID + 第一个监听端口）。
+- `Service`：当检测到 systemd/launchd 管理时显示具体服务名。
+- `Container`：从 cgroup 信息中解析出的容器标识。
+- `Restart Count`：基于祖先链的连续重启次数估算值。
+- `Context`：额外运行上下文，例如 `Socket State`（监听数量/公网）、`Resource`（RSS + 线程数）、`Files`（打开文件/FD 数量）。
+
 ### Ports-only 模式
 
 - 按 `P`（大写）进入「仅显示监听端口的进程」模式。

@@ -102,6 +102,13 @@ Run `gokill` in your terminal to start the interactive interface. You can immedi
 
 Press `i` on a selected process to open a details view showing PID, user, CPU/MEM, start time, and command. Press `esc` to return to the list once you are done.
 
+Additional fields you may see in the details view:
+- `Target`: Unified summary of the name, PID, and first listening port (if any).
+- `Service`: Service name when detected via systemd/launchd.
+- `Container`: Container identifier when detected from cgroup metadata.
+- `Restart Count`: Best-effort count of consecutive restarts inferred from the ancestry chain.
+- `Context`: Extra runtime context lines such as `Socket State` (listener count/public interface), `Resource` (RSS + threads), and `Files` (open FD count).
+
 ### Ports-only View
 
 Press `P` (uppercase) to show only processes that are listening on ports. In this view, the list is sorted by the smallest port number in ascending order.
