@@ -4,6 +4,7 @@ package why
 
 import (
 	"bytes"
+	"context"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -11,12 +12,12 @@ import (
 )
 
 // readProcessInfo reads process information using ps command on macOS.
-func readProcessInfo(pid int) (ProcessInfo, error) {
+func readProcessInfo(ctx context.Context, pid int) (ProcessInfo, error) {
 	info := ProcessInfo{PID: pid}
 
 	// Use ps to get process info
 	// Format: pid,ppid,user,state,time,rss,lstart,comm,args
-	cmd := exec.Command("ps", "-p", strconv.Itoa(pid), "-o", "pid=,ppid=,user=,state=,time=,rss=,lstart=,comm=,args=")
+	cmd := exec.CommandContext(ctx, "ps", "-p", strconv.Itoa(pid), "-o", "pid=,ppid=,user=,state=,time=,rss=,lstart=,comm=,args=")
 	output, err := cmd.Output()
 	if err != nil {
 		return info, err
@@ -72,14 +73,14 @@ func readProcessInfo(pid int) (ProcessInfo, error) {
 	}
 
 	// Get working directory using lsof
-	info.WorkingDir = getWorkingDir(pid)
+	info.WorkingDir = getWorkingDir(ctx, pid)
 
 	return info, nil
 }
 
 // getWorkingDir gets the working directory using lsof.
-func getWorkingDir(pid int) string {
-	cmd := exec.Command("lsof", "-p", strconv.Itoa(pid), "-Fn", "-a", "-d", "cwd")
+func getWorkingDir(ctx context.Context, pid int) string {
+	cmd := exec.CommandContext(ctx, "lsof", "-p", strconv.Itoa(pid), "-Fn", "-a", "-d", "cwd")
 	output, err := cmd.Output()
 	if err != nil {
 		return ""

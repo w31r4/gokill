@@ -106,10 +106,6 @@ func (a *baseAnalyzer) Analyze(ctx context.Context, pid int) (*AnalysisResult, e
 
 	// Build ancestry chain
 	ancestry, err := buildAncestry(ctx, pid)
-	if err != nil {
-		// Return partial result even on error
-		return result, nil
-	}
 	result.Ancestry = ancestry
 
 	// Get working directory
@@ -130,6 +126,11 @@ func (a *baseAnalyzer) Analyze(ctx context.Context, pid int) (*AnalysisResult, e
 	if len(ancestry) > 0 {
 		targetProcess := &ancestry[len(ancestry)-1]
 		result.Warnings = HealthCheck(targetProcess)
+	}
+
+	if err != nil {
+		// Return partial result even on error
+		return result, nil
 	}
 
 	return result, nil

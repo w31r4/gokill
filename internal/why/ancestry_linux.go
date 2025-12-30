@@ -3,16 +3,22 @@
 package why
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
 // readProcessInfo reads process information from /proc filesystem.
-func readProcessInfo(pid int) (ProcessInfo, error) {
+func readProcessInfo(ctx context.Context, pid int) (ProcessInfo, error) {
 	info := ProcessInfo{PID: pid}
+
+	if err := ctx.Err(); err != nil {
+		return info, err
+	}
 
 	// Read /proc/[pid]/stat for basic info
 	statPath := fmt.Sprintf("/proc/%d/stat", pid)
@@ -148,9 +154,15 @@ func uidToUsername(uid int) string {
 }
 
 // bootTime returns the system boot time.
-var bootTimeCache time.Time
+var (
+	bootTimeCache time.Time
+	bootTimeMu    sync.Mutex
+)
 
 func bootTime() time.Time {
+	bootTimeMu.Lock()
+	defer bootTimeMu.Unlock()
+
 	if !bootTimeCache.IsZero() {
 		return bootTimeCache
 	}
