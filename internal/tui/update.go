@@ -63,135 +63,110 @@ func getProcessDetails(pid int) tea.Cmd {
 // 并可以选择性地返回一个新的命令（`tea.Cmd`）来执行后续的异步操作。
 // 整个应用的交互逻辑都集中在这里。
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	// 使用一个 `switch` 语句来判断传入消息的具体类型。
 	switch msg := msg.(type) {
-	// 消息1: 进程列表已成功加载。
 	case processesLoadedMsg:
-		m.processes = msg.processes // 使用新列表更新模型中的完整进程列表。
-		m.warnings = msg.warnings   // 存储获取过程中产生的任何警告。
-
-		m.filtered = m.filterProcesses(m.textInput.Value()) // 根据当前的搜索词重新过滤列表。
-		// 返回一个命令，在后台异步地将新的进程列表保存到缓存文件。
-		// 这是一个“即发即忘”的命令，我们不关心它的结果。
-		return m, func() tea.Msg {
-			_ = process.Save(m.processes)
-			return nil
-		}
-
-	// 消息2: 单个进程的详细信息已加载。
+		return m.updateProcessesLoaded(msg)
 	case processDetailsMsg:
-		m.processDetails = string(msg) // 更新模型中的详情字符串。
-
-		// 使用 viewport 内容区域宽度做格式化（考虑 viewport.Style 的 padding）。
-		vpHFrame, _ := m.detailsViewport.Style.GetFrameSize()
-		contentWidth := m.detailsViewport.Width - vpHFrame
-		formattedDetails := formatProcessDetails(m.processDetails, contentWidth)
-
-		// 按内容行数收缩详情 viewport 的高度，避免面板“又大又空”。
-		lines := strings.Split(formattedDetails, "\n")
-		contentHeight := len(lines)
-		if contentHeight <= 0 {
-			contentHeight = 1
-		}
-		maxHeight := m.detailsViewport.Height
-		if maxHeight <= 0 {
-			maxHeight = contentHeight
-		}
-		if contentHeight > maxHeight {
-			m.detailsViewport.Height = maxHeight
-		} else {
-			m.detailsViewport.Height = contentHeight
-		}
-
-		// 不按内容宽度收缩 viewport：保持 WindowSizeMsg 计算出的宽度，避免长行更易溢出。
-		m.detailsViewport.SetContent(formattedDetails)
-		m.detailsViewport.GotoTop()
-		return m, nil // 无需执行新的命令。
-
-	// 消息3: 发生了一个错误。
+		return m.updateProcessDetails(msg)
 	case errMsg:
-		// 在并发环境中，我们可能会尝试操作一个刚刚退出的进程，
-		// 这会产生 "process already finished" 错误。这是一种正常情况，
-		// 我们选择忽略它，以避免不必要的用户干扰。
-		if !strings.Contains(msg.err.Error(), "process already finished") {
-			m.err = msg.err // 对于所有其他错误，将其存储在模型中以便在UI上显示。
-		}
-		return m, nil
-
-	// 消息4: 发送信号的操作已成功完成。
+		return m.updateErr(msg)
 	case signalOKMsg:
-		// 遍历完整的进程列表，找到匹配PID的进程并更新其状态。
-		for _, it := range m.processes {
-			if int(it.Pid) == msg.pid {
-				it.Status = msg.status
-				break
-			}
-		}
-		// `m.filtered` 列表中的项是指向 `m.processes` 中元素的指针，
-		// 因此这里的修改会自动反映在过滤后的列表中。我们只需返回模型，
-		// Bubble Tea 的运行时会自动调用 `View` 函数来重绘界面。
-		return m, nil
-
-	// 消息5: 窗口大小改变
+		return m.updateSignalOK(msg)
 	case tea.WindowSizeMsg:
-		// 根据当前窗口和样式动态计算详情 viewport 的可用区域，
-		// 避免样式（margin/padding/border）调整后导致宽高计算失真。
-
-		// 1. 标题和底部帮助文本本身占用的高度。
-		headerHeight := lipgloss.Height(detailTitleStyle.Render("Process Details"))
-		footerHeight := lipgloss.Height(detailHelpStyle.Render(" esc: back to list • up/down/pgup/pgdn: scroll"))
-
-		// 2. docStyle 与 detailPaneStyle 在垂直和水平方向上的“框架”尺寸。
-		docHFrame, docVFrame := docStyle.GetFrameSize()
-		paneHFrame, paneVFrame := detailPaneStyle.GetFrameSize()
-
-		// 3. 计算 viewport 的宽度和高度。
-		viewportWidth := msg.Width - docHFrame - paneHFrame
-		viewportHeight := msg.Height - docVFrame - paneVFrame - headerHeight - footerHeight
-
-		// 4. 防止出现非正数尺寸。
-		if viewportWidth < 0 {
-			viewportWidth = 0
-		}
-		if viewportHeight < 0 {
-			viewportHeight = 0
-		}
-
-		m.detailsViewport.Width = viewportWidth
-		m.detailsViewport.Height = viewportHeight
-
-	// 消息6: 用户按键输入。
+		return m.updateWindowSize(msg), nil
 	case tea.KeyMsg:
-		// 将按键消息分发给一个专门的、基于当前UI模式的处理器。
 		newModel, keyCmd, handled := m.updateKeyMsg(msg)
 		if handled {
-			// 如果按键已被子处理器完全处理，则直接返回其结果。
 			return newModel, keyCmd
 		}
-		// 如果未被处理（例如，在搜索框中输入字符），则进入下面的默认处理逻辑。
+		m = newModel
 	}
 
-	// --- 默认处理逻辑 ---
-	// 这部分主要处理当按键消息没有被 `updateKeyMsg` 的特定模式捕获时的情况，
-	// 通常意味着用户正在与搜索框交互。
+	return m.updateDefault(msg)
+}
 
-	var filterCmd tea.Cmd
-	// 将消息传递给 `textinput` 组件的 `Update` 方法，让它处理输入。
-	m.textInput, filterCmd = m.textInput.Update(msg)
+func (m model) updateProcessesLoaded(msg processesLoadedMsg) (tea.Model, tea.Cmd) {
+	m.processes = msg.processes
+	m.warnings = msg.warnings
 
-	// 每当搜索框内容变化时，都重新执行过滤。
 	m.filtered = m.filterProcesses(m.textInput.Value())
+	return m, func() tea.Msg {
+		_ = process.Save(m.processes)
+		return nil
+	}
+}
 
-	// 过滤后，列表长度可能变化，需要确保光标位置仍然有效。
-	// 这被称为“钳制”（Clamping）光标。
-	if m.cursor >= len(m.filtered) {
-		if len(m.filtered) > 0 {
-			m.cursor = len(m.filtered) - 1
-		} else {
-			m.cursor = 0
+func (m model) updateProcessDetails(msg processDetailsMsg) (tea.Model, tea.Cmd) {
+	m.processDetails = string(msg)
+
+	vpHFrame, _ := m.detailsViewport.Style.GetFrameSize()
+	contentWidth := m.detailsViewport.Width - vpHFrame
+	formattedDetails := formatProcessDetails(m.processDetails, contentWidth)
+
+	lines := strings.Split(formattedDetails, "\n")
+	contentHeight := len(lines)
+	if contentHeight <= 0 {
+		contentHeight = 1
+	}
+	maxHeight := m.detailsViewport.Height
+	if maxHeight <= 0 {
+		maxHeight = contentHeight
+	}
+	if contentHeight > maxHeight {
+		m.detailsViewport.Height = maxHeight
+	} else {
+		m.detailsViewport.Height = contentHeight
+	}
+
+	m.detailsViewport.SetContent(formattedDetails)
+	m.detailsViewport.GotoTop()
+	return m, nil
+}
+
+func (m model) updateErr(msg errMsg) (tea.Model, tea.Cmd) {
+	if !strings.Contains(msg.err.Error(), "process already finished") {
+		m.err = msg.err
+	}
+	return m, nil
+}
+
+func (m model) updateSignalOK(msg signalOKMsg) (tea.Model, tea.Cmd) {
+	for _, it := range m.processes {
+		if int(it.Pid) == msg.pid {
+			it.Status = msg.status
+			break
 		}
 	}
+	return m, nil
+}
 
+func (m model) updateWindowSize(msg tea.WindowSizeMsg) model {
+	headerHeight := lipgloss.Height(detailTitleStyle.Render("Process Details"))
+	footerHeight := lipgloss.Height(detailHelpStyle.Render(" esc: back to list • up/down/pgup/pgdn: scroll"))
+
+	docHFrame, docVFrame := docStyle.GetFrameSize()
+	paneHFrame, paneVFrame := detailPaneStyle.GetFrameSize()
+
+	viewportWidth := msg.Width - docHFrame - paneHFrame
+	viewportHeight := msg.Height - docVFrame - paneVFrame - headerHeight - footerHeight
+
+	if viewportWidth < 0 {
+		viewportWidth = 0
+	}
+	if viewportHeight < 0 {
+		viewportHeight = 0
+	}
+
+	m.detailsViewport.Width = viewportWidth
+	m.detailsViewport.Height = viewportHeight
+	return m
+}
+
+func (m model) updateDefault(msg tea.Msg) (tea.Model, tea.Cmd) {
+	var filterCmd tea.Cmd
+	m.textInput, filterCmd = m.textInput.Update(msg)
+	m.filtered = m.filterProcesses(m.textInput.Value())
+	m.cursor = clampIndex(m.cursor, len(m.filtered))
 	return m, filterCmd
 }
 
@@ -307,187 +282,237 @@ func (m model) updateConfirmKey(msg tea.KeyMsg) (model, tea.Cmd) {
 // updateDepModeKey 专门处理当应用处于“依赖树模式” (`m.dep.mode == true`) 时的按键事件。
 // 这是最复杂的一个按键处理器，因为它包含了树的导航、过滤、展开/折叠以及对节点执行操作的逻辑。
 func (m model) updateDepModeKey(msg tea.KeyMsg) (model, tea.Cmd, bool) {
-	var cmd tea.Cmd
-
-	// 优先处理搜索框激活的情况。
 	if m.textInput.Focused() {
-		switch msg.String() {
-		case "enter", "esc":
-			m.textInput.Blur() // 退出搜索框焦点。
-		}
-		m.textInput, cmd = m.textInput.Update(msg)
-		// 每次输入变化后，重新计算扁平化和过滤后的行，并钳制光标。
-		if c := len(applyDepFilters(m, buildDepLines(m))); m.dep.cursor >= c {
-			m.dep.cursor = max(0, c-1)
-		}
-		return m, cmd, true
+		return m.updateDepModeSearchKey(msg)
+	}
+	if newModel, cmd, handled := m.handleDepModeGlobalKey(msg); handled {
+		return newModel, cmd, true
+	}
+	if newModel, cmd, handled := m.handleDepModeFilterKey(msg); handled {
+		return newModel, cmd, true
+	}
+	if newModel, cmd, handled := m.handleDepModeRootKey(msg); handled {
+		return newModel, cmd, true
+	}
+	if newModel, cmd, handled := m.handleDepModeActionKey(msg); handled {
+		return newModel, cmd, true
+	}
+	if newModel, cmd, handled := m.handleDepModeNavKey(msg); handled {
+		return newModel, cmd, true
 	}
 
-	// 处理非搜索状态下的按键。
-	switch key := msg.String(); key {
-	// 视图切换与退出
+	return m, nil, false
+}
+
+func (m model) updateDepModeSearchKey(msg tea.KeyMsg) (model, tea.Cmd, bool) {
+	var cmd tea.Cmd
+	switch msg.String() {
+	case "enter", "esc":
+		m.textInput.Blur()
+	}
+	m.textInput, cmd = m.textInput.Update(msg)
+	m = m.clampDepCursor()
+	return m, cmd, true
+}
+
+func (m model) handleDepModeGlobalKey(msg tea.KeyMsg) (model, tea.Cmd, bool) {
+	switch msg.String() {
 	case "esc":
-		m.dep.mode = false   // 退出依赖树模式。
-		m.dep.expanded = nil // 清空展开状态。
-		m.dep.cursor = 0     // 重置光标。
-		return m, nil, true
+		return m.exitDepMode(), nil, true
 	case "ctrl+c", "q":
 		return m, tea.Quit, true
 	case "?":
 		m.helpOpen = true
 		return m, nil, true
 	case "ctrl+r":
-		return m, getProcesses, true // 刷新整个进程列表。
+		return m, getProcesses, true
+	}
+	return m, nil, false
+}
 
-	// 过滤与显示选项
+func (m model) handleDepModeFilterKey(msg tea.KeyMsg) (model, tea.Cmd, bool) {
+	switch msg.String() {
 	case "/":
-		m.textInput.Focus() // 激活搜索框。
+		m.textInput.Focus()
 		return m, nil, true
 	case "S":
-		m.dep.aliveOnly = !m.dep.aliveOnly // 切换“仅显示存活”过滤器。
-		if c := len(applyDepFilters(m, buildDepLines(m))); m.dep.cursor >= c {
-			m.dep.cursor = max(0, c-1)
-		}
-		return m, nil, true
+		m.dep.aliveOnly = !m.dep.aliveOnly
+		return m.clampDepCursor(), nil, true
 	case "L":
-		m.dep.portsOnly = !m.dep.portsOnly // 切换“仅显示监听端口”过滤器。
-		if c := len(applyDepFilters(m, buildDepLines(m))); m.dep.cursor >= c {
-			m.dep.cursor = max(0, c-1)
-		}
-		return m, nil, true
+		m.dep.portsOnly = !m.dep.portsOnly
+		return m.clampDepCursor(), nil, true
 	case "a":
-		m.dep.showAncestors = !m.dep.showAncestors // 切换是否显示祖先链。
+		m.dep.showAncestors = !m.dep.showAncestors
 		return m, nil, true
+	}
+	return m, nil, false
+}
 
-	// 树结构导航
-	case "u": // 将父进程设为新的根节点。
-		if root := m.findProcess(m.dep.rootPID); root != nil {
-			if parent := m.findProcess(root.PPid); parent != nil {
-				m.dep.rootPID = parent.Pid
-				m.dep.expanded = map[int32]depNodeState{parent.Pid: {expanded: true, page: 1}}
-				m.dep.cursor = 0
-			}
+func (m model) handleDepModeRootKey(msg tea.KeyMsg) (model, tea.Cmd, bool) {
+	switch msg.String() {
+	case "u":
+		return m.depRootToParent(), nil, true
+	case "enter", "o":
+		if ln, ok := m.depLineAtCursor(); ok && ln.pid != 0 {
+			m = m.setDepRoot(ln.pid)
 		}
 		return m, nil, true
-	case "enter", "o": // 将当前选中的节点设为新的根节点。
-		lines := buildDepLines(m)
-		if len(lines) > 0 && m.dep.cursor < len(lines) {
-			ln := lines[m.dep.cursor]
-			if ln.pid != 0 {
-				m.dep.rootPID = ln.pid
-				m.dep.expanded = map[int32]depNodeState{ln.pid: {expanded: true, page: 1}}
-				m.dep.cursor = 0
-			}
-		}
-		return m, nil, true
+	}
+	return m, nil, false
+}
 
-	// 对选中节点执行操作
-	case "i": // 显示详情
-		lines := buildDepLines(m)
-		if len(lines) > 0 && m.dep.cursor < len(lines) {
-			ln := lines[m.dep.cursor]
-			if ln.pid != 0 {
-				m.showDetails = true
-				m.processDetails = ""
-				m.detailsViewport.SetContent("Loading...")
-				return m, getProcessDetails(int(ln.pid)), true
-			}
+func (m model) handleDepModeActionKey(msg tea.KeyMsg) (model, tea.Cmd, bool) {
+	switch msg.String() {
+	case "i":
+		if ln, ok := m.depLineAtCursor(); ok && ln.pid != 0 {
+			newModel, cmd := m.openProcessDetails(ln.pid)
+			return newModel, cmd, true
 		}
 		return m, nil, true
-	case "x": // 杀死进程
-		lines := buildDepLines(m)
-		if len(lines) > 0 && m.dep.cursor < len(lines) {
-			ln := lines[m.dep.cursor]
+	case "x":
+		if ln, ok := m.depLineAtCursor(); ok {
 			if it := m.findProcess(ln.pid); it != nil {
 				m.confirm = &confirmPrompt{pid: ln.pid, name: it.Executable, op: "kill", sig: syscall.SIGTERM, status: process.Killed}
 			}
 		}
 		return m, nil, true
-	case "p": // 暂停进程
-		lines := buildDepLines(m)
-		if len(lines) > 0 && m.dep.cursor < len(lines) {
-			ln := lines[m.dep.cursor]
+	case "p":
+		if ln, ok := m.depLineAtCursor(); ok {
 			if it := m.findProcess(ln.pid); it != nil {
 				m.confirm = &confirmPrompt{pid: ln.pid, name: it.Executable, op: "pause", sig: sigStop, status: process.Paused}
 			}
 		}
 		return m, nil, true
-	case "r": // 恢复进程
-		lines := buildDepLines(m)
-		if len(lines) > 0 && m.dep.cursor < len(lines) {
-			ln := lines[m.dep.cursor]
+	case "r":
+		if ln, ok := m.depLineAtCursor(); ok {
 			if it := m.findProcess(ln.pid); it != nil && it.Status == process.Paused {
 				m.confirm = &confirmPrompt{pid: ln.pid, name: it.Executable, op: "resume", sig: sigCont, status: process.Alive}
 			}
 		}
 		return m, nil, true
+	}
+	return m, nil, false
+}
 
-	// 光标与折叠/展开
+func (m model) handleDepModeNavKey(msg tea.KeyMsg) (model, tea.Cmd, bool) {
+	switch msg.String() {
 	case "up", "k":
-		if m.dep.cursor > 0 {
-			m.dep.cursor--
-		}
-		return m, nil, true
+		m.dep.cursor--
+		return m.clampDepCursor(), nil, true
 	case "down", "j":
-		if m.dep.cursor < len(applyDepFilters(m, buildDepLines(m)))-1 {
-			m.dep.cursor++
-		}
-		return m, nil, true
-	case "left", "h": // 折叠节点
-		lines := buildDepLines(m)
-		if len(lines) > 0 && m.dep.cursor < len(lines) {
-			ln := lines[m.dep.cursor]
-			if ln.isMore { // 如果在 "more" 或 "deeper" 上，则折叠其父节点。
-				st := m.dep.expanded[ln.parent]
-				st.expanded = false
-				st.page = 1
-				st.depthExtend = 0
-				m.dep.expanded[ln.parent] = st
-			} else if ln.pid != 0 { // 否则折叠当前节点。
-				st := m.dep.expanded[ln.pid]
-				st.expanded = false
-				m.dep.expanded[ln.pid] = st
-			}
-			// 钳制光标
-			if c := len(applyDepFilters(m, buildDepLines(m))); m.dep.cursor >= c {
-				m.dep.cursor = max(0, c-1)
-			}
-		}
-		return m, nil, true
-	case "right", "l", " ": // 展开节点、分页或钻取
-		lines := buildDepLines(m)
-		if len(lines) > 0 && m.dep.cursor < len(lines) {
-			ln := lines[m.dep.cursor]
-			if ln.isMore { // 如果在提示行上
-				st := m.dep.expanded[ln.parent]
-				if ln.isDeeper {
-					st.depthExtend++ // 增加钻取深度
-				} else {
-					st.page++ // 加载下一页
-				}
-				st.expanded = true
-				m.dep.expanded[ln.parent] = st
-			} else if ln.pid != 0 { // 在普通节点上，展开它。
-				st := m.dep.expanded[ln.pid]
-				st.expanded = !st.expanded // 空格键可以切换展开/折叠
-				if key == "right" || key == "l" {
-					st.expanded = true // 方向键总是展开
-				}
-				if st.page == 0 {
-					st.page = 1
-				}
-				m.dep.expanded[ln.pid] = st
-			}
-			// 钳制光标
-			if c := len(applyDepFilters(m, buildDepLines(m))); m.dep.cursor >= c {
-				m.dep.cursor = max(0, c-1)
-			}
-		}
-		return m, nil, true
+		m.dep.cursor++
+		return m.clampDepCursor(), nil, true
+	case "left", "h":
+		return m.depCollapseAtCursor(), nil, true
+	case "right", "l", " ":
+		return m.depExpandAtCursor(msg.String()), nil, true
+	}
+	return m, nil, false
+}
+
+func (m model) depLineAtCursor() (depLine, bool) {
+	lines := buildDepLines(m)
+	if m.dep.cursor < 0 || m.dep.cursor >= len(lines) {
+		return depLine{}, false
+	}
+	return lines[m.dep.cursor], true
+}
+
+func (m model) setDepRoot(pid int32) model {
+	m.dep.rootPID = pid
+	m.dep.expanded = map[int32]depNodeState{pid: {expanded: true, page: 1}}
+	m.dep.cursor = 0
+	return m
+}
+
+func (m model) depRootToParent() model {
+	root := m.findProcess(m.dep.rootPID)
+	if root == nil {
+		return m
+	}
+	parent := m.findProcess(root.PPid)
+	if parent == nil {
+		return m
+	}
+	return m.setDepRoot(parent.Pid)
+}
+
+func (m model) exitDepMode() model {
+	m.dep.mode = false
+	m.dep.expanded = nil
+	m.dep.cursor = 0
+	return m
+}
+
+func (m model) depCollapseAtCursor() model {
+	lines := buildDepLines(m)
+	if m.dep.cursor < 0 || m.dep.cursor >= len(lines) {
+		return m
 	}
 
-	// 如果按键在 T 模式下未被处理，返回 false，让上层 Update 函数的默认逻辑处理。
-	return m, nil, false
+	ln := lines[m.dep.cursor]
+	if ln.isMore {
+		st := m.dep.expanded[ln.parent]
+		st.expanded = false
+		st.page = 1
+		st.depthExtend = 0
+		m.dep.expanded[ln.parent] = st
+	} else if ln.pid != 0 {
+		st := m.dep.expanded[ln.pid]
+		st.expanded = false
+		m.dep.expanded[ln.pid] = st
+	}
+	return m.clampDepCursor()
+}
+
+func (m model) depExpandAtCursor(key string) model {
+	lines := buildDepLines(m)
+	if m.dep.cursor < 0 || m.dep.cursor >= len(lines) {
+		return m
+	}
+
+	ln := lines[m.dep.cursor]
+	if ln.isMore {
+		st := m.dep.expanded[ln.parent]
+		if ln.isDeeper {
+			st.depthExtend++
+		} else {
+			st.page++
+		}
+		st.expanded = true
+		m.dep.expanded[ln.parent] = st
+		return m.clampDepCursor()
+	}
+	if ln.pid == 0 {
+		return m.clampDepCursor()
+	}
+
+	st := m.dep.expanded[ln.pid]
+	st.expanded = !st.expanded
+	if key == "right" || key == "l" {
+		st.expanded = true
+	}
+	if st.page == 0 {
+		st.page = 1
+	}
+	m.dep.expanded[ln.pid] = st
+	return m.clampDepCursor()
+}
+
+func (m model) clampDepCursor() model {
+	c := len(applyDepFilters(m, buildDepLines(m)))
+	if c <= 0 {
+		m.dep.cursor = 0
+		return m
+	}
+	if m.dep.cursor < 0 {
+		m.dep.cursor = 0
+		return m
+	}
+	if m.dep.cursor >= c {
+		m.dep.cursor = c - 1
+	}
+	return m
 }
 
 // updateErrorKey 专门处理当错误覆盖层 (`m.err != nil`) 显示时的按键事件。
@@ -534,50 +559,64 @@ func (m model) updateSearchKey(msg tea.KeyMsg) (model, tea.Cmd) {
 // updateMainListKey 处理在主进程列表视图中的默认按键事件。
 // 这是当所有其他特定模式（如帮助、确认、依赖树等）都未激活时的最终处理器。
 func (m model) updateMainListKey(msg tea.KeyMsg) (model, tea.Cmd, bool) {
-	switch key := msg.String(); key {
-	// 退出与刷新
+	if newModel, cmd, handled := m.handleMainListGlobalKey(msg); handled {
+		return newModel, cmd, true
+	}
+	if newModel, cmd, handled := m.handleMainListViewKey(msg); handled {
+		return newModel, cmd, true
+	}
+	if newModel, cmd, handled := m.handleMainListNavKey(msg); handled {
+		return newModel, cmd, true
+	}
+	if newModel, cmd, handled := m.handleMainListActionKey(msg); handled {
+		return newModel, cmd, true
+	}
+
+	return m, nil, false
+}
+
+func (m model) handleMainListGlobalKey(msg tea.KeyMsg) (model, tea.Cmd, bool) {
+	switch msg.String() {
 	case "ctrl+c", "q":
 		return m, tea.Quit, true
 	case "ctrl+r":
 		return m, getProcesses, true
+	}
+	return m, nil, false
+}
 
-	// 视图与模式切换
+func (m model) handleMainListViewKey(msg tea.KeyMsg) (model, tea.Cmd, bool) {
+	switch msg.String() {
 	case "esc":
-		// 在主列表中，ESC 的主要作用是退出 "ports-only" 模式。
-		if m.portsOnly {
-			m.portsOnly = false
-			m.filtered = m.filterProcesses(m.textInput.Value())
-			return m, nil, true
+		if !m.portsOnly {
+			return m, nil, false
 		}
-		// 如果不在该模式，则此按键未被处理。
+		m.portsOnly = false
+		m.filtered = m.filterProcesses(m.textInput.Value())
+		return m, nil, true
 	case "?":
 		m.helpOpen = true
 		return m, nil, true
 	case "/":
 		m.textInput.Focus()
 		return m, nil, true
-	case "P": // 注意是大写P
-		// 进入“仅显示占用端口的进程”模式。
+	case "P":
 		if !m.portsOnly {
 			m.portsOnly = true
 			m.filtered = m.filterProcesses(m.textInput.Value())
 		}
 		return m, nil, true
-	case "T": // 注意是大写T
-		// 基于当前选中的进程，进入依赖树模式。
-		if len(m.filtered) > 0 && m.cursor < len(m.filtered) {
-			p := m.filtered[m.cursor]
-			m.dep.mode = true
-			m.dep.rootPID = p.Pid
-			if m.dep.expanded == nil {
-				m.dep.expanded = make(map[int32]depNodeState)
-			}
-			m.dep.expanded[p.Pid] = depNodeState{expanded: true, page: 1}
-			m.dep.cursor = 0
+	case "T":
+		if p, ok := m.selectedProcess(); ok {
+			m = m.enterDepMode(p.Pid)
 		}
 		return m, nil, true
+	}
+	return m, nil, false
+}
 
-	// 列表导航
+func (m model) handleMainListNavKey(msg tea.KeyMsg) (model, tea.Cmd, bool) {
+	switch msg.String() {
 	case "up", "k":
 		if m.cursor > 0 {
 			m.cursor--
@@ -588,40 +627,60 @@ func (m model) updateMainListKey(msg tea.KeyMsg) (model, tea.Cmd, bool) {
 			m.cursor++
 		}
 		return m, nil, true
+	}
+	return m, nil, false
+}
 
-	// 对选中进程执行操作
-	case "enter": // 默认操作：杀死进程
-		if len(m.filtered) > 0 && m.cursor < len(m.filtered) {
-			p := m.filtered[m.cursor]
-			// 注意：在主列表视图中，此操作默认直接发送信号，不弹出确认框，以实现快速操作。
-			// 这与依赖树视图中的行为不同，后者总是要求确认。
+func (m model) handleMainListActionKey(msg tea.KeyMsg) (model, tea.Cmd, bool) {
+	switch msg.String() {
+	case "enter":
+		if p, ok := m.selectedProcess(); ok {
 			return m, sendSignalWithStatus(int(p.Pid), syscall.SIGTERM, process.Killed), true
 		}
-	case "p": // 暂停进程
-		if len(m.filtered) > 0 && m.cursor < len(m.filtered) {
-			p := m.filtered[m.cursor]
-			// 直接发送 SIGSTOP 信号。
+		return m, nil, false
+	case "p":
+		if p, ok := m.selectedProcess(); ok {
 			return m, sendSignalWithStatus(int(p.Pid), sigStop, process.Paused), true
 		}
-	case "r": // 恢复进程
-		if len(m.filtered) > 0 && m.cursor < len(m.filtered) {
-			p := m.filtered[m.cursor]
-			if p.Status == process.Paused {
-				return m, sendSignalWithStatus(int(p.Pid), sigCont, process.Alive), true
-			}
+		return m, nil, false
+	case "r":
+		if p, ok := m.selectedProcess(); ok && p.Status == process.Paused {
+			return m, sendSignalWithStatus(int(p.Pid), sigCont, process.Alive), true
 		}
-	case "i": // 显示详情
-		if len(m.filtered) > 0 && m.cursor < len(m.filtered) {
-			m.showDetails = true
-			m.processDetails = ""
-			m.detailsViewport.SetContent("Loading...")
-			p := m.filtered[m.cursor]
-			return m, getProcessDetails(int(p.Pid)), true
+		return m, nil, false
+	case "i":
+		if p, ok := m.selectedProcess(); ok {
+			newModel, cmd := m.openProcessDetails(p.Pid)
+			return newModel, cmd, true
 		}
+		return m, nil, false
 	}
-
-	// 如果按键到这里仍未被处理，返回 false，让上层 Update 的默认逻辑（即文本输入）处理。
 	return m, nil, false
+}
+
+func (m model) selectedProcess() (*process.Item, bool) {
+	if m.cursor < 0 || m.cursor >= len(m.filtered) {
+		return nil, false
+	}
+	return m.filtered[m.cursor], true
+}
+
+func (m model) enterDepMode(pid int32) model {
+	m.dep.mode = true
+	m.dep.rootPID = pid
+	if m.dep.expanded == nil {
+		m.dep.expanded = make(map[int32]depNodeState)
+	}
+	m.dep.expanded[pid] = depNodeState{expanded: true, page: 1}
+	m.dep.cursor = 0
+	return m
+}
+
+func (m model) openProcessDetails(pid int32) (model, tea.Cmd) {
+	m.showDetails = true
+	m.processDetails = ""
+	m.detailsViewport.SetContent("Loading...")
+	return m, getProcessDetails(int(pid))
 }
 
 // max 是一个简单的辅助函数，返回两个整数中的较大者。
@@ -630,4 +689,17 @@ func max(a, b int) int {
 		return a
 	}
 	return b
+}
+
+func clampIndex(idx, length int) int {
+	if length <= 0 {
+		return 0
+	}
+	if idx < 0 {
+		return 0
+	}
+	if idx >= length {
+		return length - 1
+	}
+	return idx
 }

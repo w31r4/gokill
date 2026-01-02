@@ -181,70 +181,46 @@ func (m model) renderFooter() string {
 func (m model) renderDependencyView() string {
 	root := m.findProcess(m.dep.rootPID)
 	if root == nil {
-		title := detailTitleStyle.Render("Dependency Tree")
-		hint := faintStyle.Render("(root process not found; esc to return)")
-		return docStyle.Render(lipgloss.JoinVertical(lipgloss.Left, title, hint))
+		return m.renderMissingDepRoot()
 	}
 
-	// Ancestor chain (optional)
-	var anc []string
-	if m.dep.showAncestors {
-		anc = m.buildAncestorLines(root)
-	}
-
-	// 1. 构建并过滤扁平化的依赖树行列表。
 	lines := applyDepFilters(m, buildDepLines(m))
+	start, end := depViewportRange(len(lines), m.dep.cursor, dependencyViewHeight)
+	anc := m.dependencyAncestorLines(root)
+	content := m.renderDependencyContent(root, lines, start, end, anc)
+	return docStyle.Render(content)
+}
 
-	// 2. 计算视口，使其始终以当前光标为中心。
-	start := m.dep.cursor - dependencyViewHeight/2
-	if start < 0 {
-		start = 0
-	}
-	end := start + dependencyViewHeight
-	if end > len(lines) {
-		end = len(lines)
-		start = max(0, end-dependencyViewHeight)
-	}
+func (m model) renderMissingDepRoot() string {
+	title := detailTitleStyle.Render("Dependency Tree")
+	hint := faintStyle.Render("(root process not found; esc to return)")
+	return docStyle.Render(lipgloss.JoinVertical(lipgloss.Left, title, hint))
+}
 
-	// 3. 使用 strings.Builder 高效地构建视图字符串。
+func (m model) dependencyAncestorLines(root *process.Item) []string {
+	if !m.dep.showAncestors {
+		return nil
+	}
+	return m.buildAncestorLines(root)
+}
+
+func (m model) renderDependencyContent(root *process.Item, lines []depLine, start, end int, ancestors []string) string {
 	var b strings.Builder
 	title := detailTitleStyle.Render(fmt.Sprintf("Dependency Tree: %s (%d)", root.Executable, root.Pid))
 	fmt.Fprintln(&b, title)
 
-	// 4. 如果需要，渲染祖先链。
-	if len(anc) > 0 {
+	if len(ancestors) > 0 {
 		fmt.Fprintln(&b, faintStyle.Render("Ancestors"))
-		for _, l := range anc {
+		for _, l := range ancestors {
 			fmt.Fprintln(&b, faintStyle.Render(l))
 		}
 		fmt.Fprintln(&b, "")
 	}
 
-	// 5. 使用预计算的 childrenMap，避免每次渲染时重复构建。
 	childrenMap := m.buildChildrenMap()
 	for i := start; i < end; i++ {
 		ln := lines[i]
-		lineText := ln.text
-		if it := m.findProcess(ln.pid); it != nil {
-			// 检查是否存在未显示的子节点（因为深度限制或折叠），并据此添加一个 "+" 标记。
-			hasKids := len(childrenMap[ln.pid]) > 0
-			st := m.dep.expanded[ln.pid]
-			allowDepth := dependencyTreeDepth - 1 + st.depthExtend
-			hiddenDeps := hasKids && (!st.expanded || ln.depth >= allowDepth)
-
-			// 应用进程状态样式。
-			switch it.Status {
-			case process.Killed:
-				lineText = killingStyle.Render(lineText)
-			case process.Paused:
-				lineText = pausedStyle.Render(lineText)
-			}
-			if hiddenDeps {
-				lineText += faintStyle.Render(" +")
-			}
-		}
-
-		// 高亮显示当前光标所在的行。
+		lineText := m.depLineText(ln, childrenMap)
 		if i == m.dep.cursor {
 			fmt.Fprintln(&b, selectedStyle.Render("❯ "+lineText))
 		} else {
@@ -252,26 +228,75 @@ func (m model) renderDependencyView() string {
 		}
 	}
 
-	// 6. 构建并渲染底部的状态/帮助栏。
-	var filterBadges []string
-	if m.textInput.Value() != "" {
-		filterBadges = append(filterBadges, fmt.Sprintf("filter: %q", m.textInput.Value()))
+	fmt.Fprintln(&b, "")
+	fmt.Fprintln(&b, m.depHelpLine())
+	return strings.TrimRight(b.String(), "\n")
+}
+
+func depViewportRange(total, cursor, height int) (int, int) {
+	start := cursor - height/2
+	if start < 0 {
+		start = 0
 	}
-	if m.dep.aliveOnly {
-		filterBadges = append(filterBadges, "alive-only")
+	end := start + height
+	if end > total {
+		end = total
+		start = max(0, end-height)
 	}
-	if m.dep.portsOnly {
-		filterBadges = append(filterBadges, "listening-only")
-	}
-	filterStatus := ""
-	if len(filterBadges) > 0 {
-		filterStatus = faintStyle.Render(" [" + strings.Join(filterBadges, ", ") + "]")
+	return start, end
+}
+
+func (m model) depLineText(ln depLine, childrenMap map[int32][]*process.Item) string {
+	lineText := ln.text
+	it := m.findProcess(ln.pid)
+	if it == nil {
+		return lineText
 	}
 
-	help := faintStyle.Render("esc: back • /: filter • a: ancestors • s: alive • l: listen • u: up • enter/o: root • i: info" + filterStatus)
-	fmt.Fprintln(&b, "")
-	fmt.Fprintln(&b, help)
-	return docStyle.Render(strings.TrimRight(b.String(), "\n"))
+	switch it.Status {
+	case process.Killed:
+		lineText = killingStyle.Render(lineText)
+	case process.Paused:
+		lineText = pausedStyle.Render(lineText)
+	}
+	if m.depHasHiddenChildren(ln, childrenMap) {
+		lineText += faintStyle.Render(" +")
+	}
+	return lineText
+}
+
+func (m model) depHasHiddenChildren(ln depLine, childrenMap map[int32][]*process.Item) bool {
+	if ln.pid == 0 {
+		return false
+	}
+	if len(childrenMap[ln.pid]) == 0 {
+		return false
+	}
+	st := m.dep.expanded[ln.pid]
+	allowDepth := dependencyTreeDepth - 1 + st.depthExtend
+	return !st.expanded || ln.depth >= allowDepth
+}
+
+func (m model) depHelpLine() string {
+	help := "esc: back • /: filter • a: ancestors • s: alive • l: listen • u: up • enter/o: root • i: info"
+	if badges := m.depFilterBadges(); len(badges) > 0 {
+		help += " [" + strings.Join(badges, ", ") + "]"
+	}
+	return faintStyle.Render(help)
+}
+
+func (m model) depFilterBadges() []string {
+	var badges []string
+	if m.textInput.Value() != "" {
+		badges = append(badges, fmt.Sprintf("filter: %q", m.textInput.Value()))
+	}
+	if m.dep.aliveOnly {
+		badges = append(badges, "alive-only")
+	}
+	if m.dep.portsOnly {
+		badges = append(badges, "listening-only")
+	}
+	return badges
 }
 
 // renderProcessPane 负责渲染左侧的进程列表面板。

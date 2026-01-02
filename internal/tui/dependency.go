@@ -62,101 +62,137 @@ type depLine struct {
 	isDeeper bool   // `true` 表示这是一个“... deeper”提示行，与分页的“... more”相区分。
 }
 
+type depLineBuilder struct {
+	model       model
+	childrenMap map[int32][]*process.Item
+	lines       []depLine
+}
+
 // buildDepLines 是一个核心函数，它根据当前的 `model` 状态（特别是 `m.dep`），
 // 将内存中的进程父子关系动态地构建成一个扁平化的、可供 `View` 函数直接渲染的 `[]depLine` 列表。
 // 这个函数处理了节点的展开/折叠、子节点的分页以及递归深度的限制。
 func buildDepLines(m model) []depLine {
-	// 1. 查找根进程，如果找不到则无法构建树。
 	root := m.findProcess(m.dep.rootPID)
 	if root == nil {
 		return nil
 	}
-	// 2. 使用预计算的 childrenMap，避免每次渲染时重复构建父子关系图。
-	//    如果尚未预计算（如在某些测试或基准场景中），则回退到按需构建。
-	childrenMap := m.buildChildrenMap()
 
-	var lines []depLine
-	// 3. 添加树的根节点作为第一行。
-	lines = append(lines, depLine{pid: root.Pid, parent: 0, isMore: false, text: fmt.Sprintf("%s (%d)", root.Executable, root.Pid), depth: 0})
-
-	// 4. 定义一个递归函数 `walk` 来遍历和构建树的其余部分。
-	var walk func(pid int32, prefix string, depth int)
-	walk = func(pid int32, prefix string, depth int) {
-		kids := childrenMap[pid]
-		if len(kids) == 0 {
-			return // 如果没有子节点，递归终止。
-		}
-
-		// 对子节点进行排序，以确保每次渲染的顺序都一致。
-		sort.Slice(kids, func(i, j int) bool {
-			if kids[i].Executable == kids[j].Executable {
-				return kids[i].Pid < kids[j].Pid
-			}
-			return kids[i].Executable < kids[j].Executable
-		})
-
-		// 检查当前节点的展开状态。如果未展开（且不是根节点），则不显示其子节点。
-		st := m.dep.expanded[pid]
-		if !st.expanded && pid != m.dep.rootPID {
-			return
-		}
-
-		// 根据分页状态计算应该显示多少个子节点。
-		page := st.page
-		if page <= 0 {
-			page = 1
-		}
-		limit := dependencyTreeChildLimit * page
-		show := len(kids)
-		if show > limit {
-			show = limit
-		}
-
-		// 遍历并添加应该显示的子节点行。
-		for i := 0; i < show; i++ {
-			child := kids[i]
-			last := (i == show-1) && (show == len(kids)) // 判断是否是当前页的最后一个子节点。
-			connector := branchSymbol(last)
-			line := fmt.Sprintf("%s%s %s (%d)", prefix, connector, child.Executable, child.Pid)
-			lines = append(lines, depLine{pid: child.Pid, parent: pid, text: line, depth: depth + 1})
-
-			// 计算下一层递归的缩进前缀。
-			nextPrefix := prefix
-			if last {
-				nextPrefix += "   " // 最后一个子节点，用空格。
-			} else {
-				nextPrefix += "│  " // 非最后一个，用竖线连接。
-			}
-
-			// 检查是否达到了递归深度限制。
-			allowed := dependencyTreeDepth - 1 + m.dep.expanded[pid].depthExtend
-			if depth < allowed {
-				// 未达到限制，继续递归。
-				walk(child.Pid, nextPrefix, depth+1)
-			} else if len(childrenMap[child.Pid]) > 0 {
-				// 达到限制但仍有子节点，添加一个可交互的“... deeper”提示行。
-				// 这里的 parent 记录的是当前节点 pid（而不是更深一层的 child.Pid），
-				// 这样在按键处理逻辑中，我们可以通过 parent 精确地找到需要增加 depthExtend 的节点。
-				moreLine := fmt.Sprintf("%s└─ … (deeper)", nextPrefix)
-				lines = append(lines, depLine{pid: 0, parent: pid, isMore: true, isDeeper: true, text: moreLine, depth: depth + 1})
-			}
-		}
-
-		// 如果还有未显示的子节点（因为分页），添加一个可交互的“... more”提示行。
-		if show < len(kids) {
-			more := len(kids) - show
-			connector := branchSymbol(true)
-			moreLine := fmt.Sprintf("%s%s … (%d more)", prefix, connector, more)
-			lines = append(lines, depLine{pid: 0, parent: pid, isMore: true, isDeeper: false, text: moreLine, depth: depth})
-		}
+	builder := depLineBuilder{
+		model:       m,
+		childrenMap: m.buildChildrenMap(),
 	}
 
-	// 5. 确保根节点总是默认展开的，然后从根节点开始启动递归遍历。
-	if st, ok := m.dep.expanded[root.Pid]; !ok || !st.expanded {
-		m.dep.expanded[root.Pid] = depNodeState{expanded: true, page: 1}
+	builder.addRoot(root)
+	builder.ensureRootExpanded(root.Pid)
+	builder.walk(root.Pid, "", 0)
+
+	return builder.lines
+}
+
+func (b *depLineBuilder) addRoot(root *process.Item) {
+	b.lines = append(b.lines, depLine{pid: root.Pid, parent: 0, text: fmt.Sprintf("%s (%d)", root.Executable, root.Pid), depth: 0})
+}
+
+func (b *depLineBuilder) ensureRootExpanded(pid int32) {
+	st, ok := b.model.dep.expanded[pid]
+	if ok && st.expanded {
+		return
 	}
-	walk(root.Pid, "", 0)
-	return lines
+	b.model.dep.expanded[pid] = depNodeState{expanded: true, page: 1}
+}
+
+func (b *depLineBuilder) walk(pid int32, prefix string, depth int) {
+	kids := b.sortedChildren(pid)
+	if len(kids) == 0 {
+		return
+	}
+	if !b.model.dep.expanded[pid].expanded && pid != b.model.dep.rootPID {
+		return
+	}
+
+	show := b.pageLimit(pid, len(kids))
+	for i := 0; i < show; i++ {
+		child := kids[i]
+		last := b.isLastChild(i, show, len(kids))
+		b.appendChild(pid, child, prefix, depth, last)
+	}
+
+	if show < len(kids) {
+		b.appendMoreLine(prefix, pid, len(kids)-show, depth)
+	}
+}
+
+func (b *depLineBuilder) sortedChildren(pid int32) []*process.Item {
+	kids := b.childrenMap[pid]
+	if len(kids) == 0 {
+		return nil
+	}
+	sort.Slice(kids, func(i, j int) bool {
+		if kids[i].Executable == kids[j].Executable {
+			return kids[i].Pid < kids[j].Pid
+		}
+		return kids[i].Executable < kids[j].Executable
+	})
+	return kids
+}
+
+func (b *depLineBuilder) pageLimit(pid int32, total int) int {
+	page := b.model.dep.expanded[pid].page
+	if page <= 0 {
+		page = 1
+	}
+	limit := dependencyTreeChildLimit * page
+	if total > limit {
+		return limit
+	}
+	return total
+}
+
+func (b *depLineBuilder) isLastChild(index, show, total int) bool {
+	return index == show-1 && show == total
+}
+
+func (b *depLineBuilder) appendChild(parent int32, child *process.Item, prefix string, depth int, last bool) {
+	connector := branchSymbol(last)
+	line := fmt.Sprintf("%s%s %s (%d)", prefix, connector, child.Executable, child.Pid)
+	b.lines = append(b.lines, depLine{pid: child.Pid, parent: parent, text: line, depth: depth + 1})
+
+	nextPrefix := b.childPrefix(prefix, last)
+	b.appendChildLines(parent, child, nextPrefix, depth)
+}
+
+func (b *depLineBuilder) childPrefix(prefix string, last bool) string {
+	if last {
+		return prefix + "   "
+	}
+	return prefix + "│  "
+}
+
+func (b *depLineBuilder) appendChildLines(parent int32, child *process.Item, nextPrefix string, depth int) {
+	if b.allowDepth(parent, depth) {
+		b.walk(child.Pid, nextPrefix, depth+1)
+		return
+	}
+	if len(b.childrenMap[child.Pid]) == 0 {
+		return
+	}
+	b.appendDeeperLine(nextPrefix, parent, depth+1)
+}
+
+func (b *depLineBuilder) allowDepth(pid int32, depth int) bool {
+	allowed := dependencyTreeDepth - 1 + b.model.dep.expanded[pid].depthExtend
+	return depth < allowed
+}
+
+func (b *depLineBuilder) appendDeeperLine(prefix string, parent int32, depth int) {
+	moreLine := fmt.Sprintf("%s└─ … (deeper)", prefix)
+	b.lines = append(b.lines, depLine{pid: 0, parent: parent, isMore: true, isDeeper: true, text: moreLine, depth: depth})
+}
+
+func (b *depLineBuilder) appendMoreLine(prefix string, parent int32, more int, depth int) {
+	connector := branchSymbol(true)
+	moreLine := fmt.Sprintf("%s%s … (%d more)", prefix, connector, more)
+	b.lines = append(b.lines, depLine{pid: 0, parent: parent, isMore: true, isDeeper: false, text: moreLine, depth: depth})
 }
 
 // applyDepFilters 函数接收一个扁平化的 `depLine` 列表，并根据 T 模式下的各种过滤条件
