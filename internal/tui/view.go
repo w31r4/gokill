@@ -480,96 +480,138 @@ func formatProcessDetails(details string, viewportContentWidth int) string {
 
 	labelWidth := computeDetailLabelWidth(lines, contentWidth)
 
-	valueColumnStart := labelWidth + 1 // label cell + 1 space
-	valueWidth := contentWidth - valueColumnStart
-
-	var rows []string
-	inWhy := false
-	inWarnings := false
-
-	for _, rawLine := range lines {
-		// 只去掉行末空白，保留缩进信息用于判断 section/块内容。
-		line := strings.TrimRight(rawLine, " \t\r")
-		if strings.TrimSpace(line) == "" {
-			rows = append(rows, "")
-			inWhy = false
-			inWarnings = false
-			continue
-		}
-
-		trimmedLeft := strings.TrimLeft(line, " \t")
-		label, value := splitDetailLine(trimmedLeft)
-
-		// Why It Exists 是一个 section：先输出标题行，再把后续的 ancestry 链按段落输出。
-		if label == "Why It Exists" && strings.TrimSpace(value) == "" {
-			labelCell := detailLabelCell(label, labelWidth)
-			rows = append(rows, lipgloss.JoinHorizontal(lipgloss.Top, labelCell, " ", ""))
-			inWhy = true
-			continue
-		}
-
-		// Why section 的主体：按 `→` 分段换行；段内超长再折行。
-		if inWhy {
-			// 如果遇到空行或新的 section 标题，退出 Why 模式
-			if label != "" && label != "Why It Exists" {
-				inWhy = false
-			} else {
-				rows = append(rows, formatWhyChain(trimmedLeft, contentWidth, valueColumnStart)...)
-				continue
-			}
-		}
-
-		// Warnings section: 警告图标高亮，原因文本保持白色对齐。
-		if label == "Warnings" && strings.TrimSpace(value) == "" {
-			labelCell := detailLabelCell(label, labelWidth)
-			rows = append(rows, lipgloss.JoinHorizontal(lipgloss.Top, labelCell, " ", ""))
-			inWarnings = true
-			continue
-		}
-
-		if inWarnings {
-			// 分隔线表示 section 结束（避免把分隔线染成 warning）。
-			if strings.HasPrefix(strings.TrimSpace(trimmedLeft), "─") {
-				inWarnings = false
-			} else if label != "" && label != "Warnings" {
-				inWarnings = false
-			} else if label == "" {
-				rows = append(rows, formatWarningLine(trimmedLeft, contentWidth, valueColumnStart)...)
-				continue
-			}
-		}
-
-		// 非 Key/Value 行：作为普通文本渲染并自动换行（不做标签对齐）。
-		if label == "" {
-			for _, wl := range wrapPlainText(strings.TrimSpace(trimmedLeft), contentWidth) {
-				rows = append(rows, detailValueStyle.Render(wl))
-			}
-			continue
-		}
-
-		labelCell := detailLabelCell(label, labelWidth)
-		valueStyle := detailValueStyleFor(label, value)
-
-		// 极窄窗口下，valueWidth 可能 <= 0，此时退化为不做 value 列换行。
-		if valueWidth <= 0 {
-			rows = append(rows, lipgloss.JoinHorizontal(lipgloss.Top, labelCell, " ", valueStyle.Render(value)))
-			continue
-		}
-
-		wrapped := wrapPlainText(value, valueWidth)
-		if len(wrapped) == 0 {
-			wrapped = []string{""}
-		}
-
-		rows = append(rows, lipgloss.JoinHorizontal(lipgloss.Top, labelCell, " ", valueStyle.Render(wrapped[0])))
-
-		continuationPrefix := strings.Repeat(" ", valueColumnStart)
-		for _, cont := range wrapped[1:] {
-			rows = append(rows, continuationPrefix+valueStyle.Render(cont))
-		}
+	formatter := detailFormatter{
+		labelWidth:       labelWidth,
+		contentWidth:     contentWidth,
+		valueColumnStart: labelWidth + 1,
+		valueWidth:       contentWidth - (labelWidth + 1),
 	}
 
-	return strings.Join(rows, "\n")
+	for _, rawLine := range lines {
+		formatter.addLine(rawLine)
+	}
+
+	return strings.Join(formatter.rows, "\n")
+}
+
+type detailFormatter struct {
+	labelWidth       int
+	contentWidth     int
+	valueColumnStart int
+	valueWidth       int
+	rows             []string
+	inWhy            bool
+	inWarnings       bool
+}
+
+func (f *detailFormatter) addLine(rawLine string) {
+	line := strings.TrimRight(rawLine, " \t\r")
+	if strings.TrimSpace(line) == "" {
+		f.rows = append(f.rows, "")
+		f.inWhy = false
+		f.inWarnings = false
+		return
+	}
+
+	trimmedLeft := strings.TrimLeft(line, " \t")
+	label, value := splitDetailLine(trimmedLeft)
+
+	if f.handleWhySection(label, value, trimmedLeft) {
+		return
+	}
+	if f.handleWarningsSection(label, value, trimmedLeft) {
+		return
+	}
+
+	if label == "" {
+		f.appendPlainText(trimmedLeft)
+		return
+	}
+
+	f.appendKeyValue(label, value)
+}
+
+func (f *detailFormatter) handleWhySection(label, value, trimmedLeft string) bool {
+	if label == "Why It Exists" && strings.TrimSpace(value) == "" {
+		f.appendSectionHeader(label)
+		f.inWhy = true
+		return true
+	}
+
+	if !f.inWhy {
+		return false
+	}
+
+	if label != "" && label != "Why It Exists" {
+		f.inWhy = false
+		return false
+	}
+
+	f.rows = append(f.rows, formatWhyChain(trimmedLeft, f.contentWidth, f.valueColumnStart)...)
+	return true
+}
+
+func (f *detailFormatter) handleWarningsSection(label, value, trimmedLeft string) bool {
+	if label == "Warnings" && strings.TrimSpace(value) == "" {
+		f.appendSectionHeader(label)
+		f.inWarnings = true
+		return true
+	}
+
+	if !f.inWarnings {
+		return false
+	}
+
+	trimmed := strings.TrimSpace(trimmedLeft)
+	if strings.HasPrefix(trimmed, "─") {
+		f.inWarnings = false
+		return false
+	}
+	if label != "" && label != "Warnings" {
+		f.inWarnings = false
+		return false
+	}
+
+	if label == "" {
+		f.rows = append(f.rows, formatWarningLine(trimmedLeft, f.contentWidth, f.valueColumnStart)...)
+		return true
+	}
+
+	return false
+}
+
+func (f *detailFormatter) appendPlainText(line string) {
+	for _, wl := range wrapPlainText(strings.TrimSpace(line), f.contentWidth) {
+		f.rows = append(f.rows, detailValueStyle.Render(wl))
+	}
+}
+
+func (f *detailFormatter) appendKeyValue(label, value string) {
+	labelCell := detailLabelCell(label, f.labelWidth)
+	valueStyle := detailValueStyleFor(label, value)
+
+	// 极窄窗口下，valueWidth 可能 <= 0，此时退化为不做 value 列换行。
+	if f.valueWidth <= 0 {
+		f.rows = append(f.rows, lipgloss.JoinHorizontal(lipgloss.Top, labelCell, " ", valueStyle.Render(value)))
+		return
+	}
+
+	wrapped := wrapPlainText(value, f.valueWidth)
+	if len(wrapped) == 0 {
+		wrapped = []string{""}
+	}
+
+	f.rows = append(f.rows, lipgloss.JoinHorizontal(lipgloss.Top, labelCell, " ", valueStyle.Render(wrapped[0])))
+
+	continuationPrefix := strings.Repeat(" ", f.valueColumnStart)
+	for _, cont := range wrapped[1:] {
+		f.rows = append(f.rows, continuationPrefix+valueStyle.Render(cont))
+	}
+}
+
+func (f *detailFormatter) appendSectionHeader(label string) {
+	labelCell := detailLabelCell(label, f.labelWidth)
+	f.rows = append(f.rows, lipgloss.JoinHorizontal(lipgloss.Top, labelCell, " ", ""))
 }
 
 func computeDetailLabelWidth(lines []string, contentWidth int) int {
@@ -624,89 +666,125 @@ func formatWhyChain(chainLine string, contentWidth, valueColumnStart int) []stri
 		segments = []string{chain}
 	}
 
-	basePrefix := strings.Repeat(" ", valueColumnStart)
-	var out []string
+	formatter := newWhyChainFormatter(valueWidth, valueColumnStart)
+	formatter.appendSegments(segments)
+	return formatter.out
+}
 
-	arrowPrefix := "→ "
-	arrowJoiner := " → "
-	arrowWidth := lipgloss.Width(arrowPrefix)
+type whyChainFormatter struct {
+	valueWidth  int
+	basePrefix  string
+	arrowPrefix string
+	arrowJoiner string
+	arrowWidth  int
+	style       lipgloss.Style
+	out         []string
+}
 
-	whyStyle := detailTitleStyle.Copy().Bold(false)
-	addLine := func(line string) {
-		out = append(out, basePrefix+whyStyle.Render(line))
+func newWhyChainFormatter(valueWidth, valueColumnStart int) *whyChainFormatter {
+	return &whyChainFormatter{
+		valueWidth:  valueWidth,
+		basePrefix:  strings.Repeat(" ", valueColumnStart),
+		arrowPrefix: "→ ",
+		arrowJoiner: " → ",
+		arrowWidth:  lipgloss.Width("→ "),
+		style:       detailTitleStyle.Copy().Bold(false),
 	}
+}
 
-	emitToken := func(prefix string, token string) {
-		line := prefix + token
-		if lipgloss.Width(line) <= valueWidth {
-			addLine(line)
-			return
-		}
-
-		// 单个 token 本身超出宽度时：不得已按字符硬切（仍保证不在词间分离）。
-		tokenWidth := valueWidth - lipgloss.Width(prefix)
-		if tokenWidth < 1 {
-			tokenWidth = 1
-		}
-		parts := splitLongToken(token, tokenWidth)
-		if len(parts) == 0 {
-			addLine(prefix)
-			return
-		}
-		addLine(prefix + parts[0])
-
-		// 续行保持缩进到 prefix 的长度，避免字符切分时视觉跳动。
-		contPrefix := strings.Repeat(" ", lipgloss.Width(prefix))
-		for _, p := range parts[1:] {
-			addLine(contPrefix + p)
-		}
-	}
-
+func (f *whyChainFormatter) appendSegments(segments []string) {
 	current := ""
 	for i, seg := range segments {
 		seg = strings.TrimSpace(seg)
 		if seg == "" {
 			continue
 		}
-
-		// 首个 token：不带箭头前缀。
-		if current == "" && i == 0 {
-			if lipgloss.Width(seg) > valueWidth {
-				emitToken("", seg)
-				continue
-			}
-			current = seg
-			continue
-		}
-
-		if current == "" {
-			emitToken(arrowPrefix, seg)
-			continue
-		}
-
-		candidate := current + arrowJoiner + seg
-		if lipgloss.Width(candidate) <= valueWidth {
-			current = candidate
-			continue
-		}
-
-		// 换行边界：仅在 token 之间断行，不拆 token。
-		addLine(current)
-		current = ""
-
-		// 新行从箭头开始（表示继续链路）。
-		if lipgloss.Width(arrowPrefix+seg) > valueWidth && lipgloss.Width(seg) > valueWidth-arrowWidth {
-			emitToken(arrowPrefix, seg)
-			continue
-		}
-		current = arrowPrefix + seg
+		f.consumeSegment(i, seg, &current)
 	}
 
-	if strings.TrimSpace(current) != "" {
-		addLine(current)
+	f.flushCurrent(&current)
+}
+
+func (f *whyChainFormatter) consumeSegment(index int, seg string, current *string) {
+	if *current == "" {
+		f.startSegment(index, seg, current)
+		return
+	}
+	f.appendToCurrent(seg, current)
+}
+
+func (f *whyChainFormatter) startSegment(index int, seg string, current *string) {
+	if index == 0 {
+		if lipgloss.Width(seg) > f.valueWidth {
+			f.emitToken("", seg)
+			return
+		}
+		*current = seg
+		return
 	}
 
-	return out
+	f.emitToken(f.arrowPrefix, seg)
+}
+
+func (f *whyChainFormatter) appendToCurrent(seg string, current *string) {
+	candidate := *current + f.arrowJoiner + seg
+	if lipgloss.Width(candidate) <= f.valueWidth {
+		*current = candidate
+		return
+	}
+
+	f.addLine(*current)
+	*current = ""
+
+	if f.needsTokenSplit(seg) {
+		f.emitToken(f.arrowPrefix, seg)
+		return
+	}
+
+	*current = f.arrowPrefix + seg
+}
+
+func (f *whyChainFormatter) needsTokenSplit(seg string) bool {
+	if lipgloss.Width(f.arrowPrefix+seg) <= f.valueWidth {
+		return false
+	}
+	return lipgloss.Width(seg) > f.valueWidth-f.arrowWidth
+}
+
+func (f *whyChainFormatter) flushCurrent(current *string) {
+	if strings.TrimSpace(*current) != "" {
+		f.addLine(*current)
+	}
+}
+
+func (f *whyChainFormatter) addLine(line string) {
+	f.out = append(f.out, f.basePrefix+f.style.Render(line))
+}
+
+func (f *whyChainFormatter) emitToken(prefix string, token string) {
+	line := prefix + token
+	if lipgloss.Width(line) <= f.valueWidth {
+		f.addLine(line)
+		return
+	}
+
+	// 单个 token 本身超出宽度时：不得已按字符硬切（仍保证不在词间分离）。
+	tokenWidth := f.valueWidth - lipgloss.Width(prefix)
+	if tokenWidth < 1 {
+		tokenWidth = 1
+	}
+	parts := splitLongToken(token, tokenWidth)
+	if len(parts) == 0 {
+		f.addLine(prefix)
+		return
+	}
+	f.addLine(prefix + parts[0])
+
+	// 续行保持缩进到 prefix 的长度，避免字符切分时视觉跳动。
+	contPrefix := strings.Repeat(" ", lipgloss.Width(prefix))
+	for _, p := range parts[1:] {
+		f.addLine(contPrefix + p)
+	}
 }
 
 func formatWarningLine(line string, contentWidth, valueColumnStart int) []string {
@@ -732,11 +810,9 @@ func formatWarningLine(line string, contentWidth, valueColumnStart int) []string
 	if icon != "" {
 		gap = 1
 	}
-	textWidth := valueWidth
+	textWidth := 1
 	if iconWidth+gap < valueWidth {
 		textWidth = valueWidth - iconWidth - gap
-	} else {
-		textWidth = 1
 	}
 
 	wrapped := wrapPlainText(message, textWidth)

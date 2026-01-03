@@ -244,150 +244,233 @@ func GetProcessDetails(pid int) (string, error) {
 		return "", fmt.Errorf("process with pid %d not found: %w", pid, err)
 	}
 
-	user, err := p.Username()
-	if err != nil {
-		user = "n/a"
-	}
-
-	// 第一次采样常为 0；进行一次短间隔的二次采样以获得更可信的数值。
-	cpuPercent := 0.0
-	if v, err := p.CPUPercent(); err == nil && v > 0 {
-		cpuPercent = v
-	} else {
-		time.Sleep(200 * time.Millisecond)
-		if v2, err2 := p.CPUPercent(); err2 == nil {
-			cpuPercent = v2
-		}
-	}
-
-	memPercent, err := p.MemoryPercent()
-	if err != nil {
-		memPercent = 0.0
-	}
-
-	createTime, err := p.CreateTime() // returns millis since epoch
-	startTime := "n/a"
-	if err == nil {
-		startTime = time.Unix(createTime/1000, 0).Format("Jan 02 15:04")
-	}
-
-	// 获取进程名称 (Name)
-	name, err := p.Name()
-	if err != nil {
-		name = "n/a"
-	}
-
-	// 获取可执行文件全路径 (Exe)
-	exe, err := p.Exe()
-	if err != nil {
-		// 如果没有权限获取全路径，就留空或显示提示
-		exe = "(permission denied or n/a)"
-	}
-
-	// 获取完整命令行 (Cmdline)
-	cmdline, err := p.Cmdline()
-	if err != nil || cmdline == "" {
-		cmdline = "(n/a)"
-	}
+	details := collectProcessDetails(p)
+	ports, hasPublicListener := scanProcessPorts(p)
 
 	var b strings.Builder
-	fmt.Fprintf(&b, "  User:\t%s\n", user)
-	fmt.Fprintf(&b, "  Name:\t%s\n", name)
-	fmt.Fprintf(&b, "  %%CPU:\t%.1f\n", cpuPercent)
-	fmt.Fprintf(&b, "  %%MEM:\t%.1f\n", memPercent)
-	fmt.Fprintf(&b, "  Start:\t%s\n", startTime)
-	ports := []uint32(nil)
-	hasPublicListener := false
-	if shouldScanPorts() {
-		ctx, cancel := context.WithTimeout(context.Background(), portScanTimeout())
-		var public bool
-		ports, public = getProcessListenerInfoCtx(ctx, p)
-		if len(ports) > 0 {
-			fmt.Fprintf(&b, "  Ports:\t%s\n", formatPorts(ports))
-		}
-		hasPublicListener = public
-		cancel()
-	}
-	fmt.Fprintf(&b, "  Target:\t%s\n", formatTargetSummary(name, int(p.Pid), ports))
-	fmt.Fprintf(&b, "  PID:\t%d\n", p.Pid)
-	fmt.Fprintf(&b, "  Exe:\t%s\n", exe)
-	fmt.Fprintf(&b, "  Command:\t%s\n", cmdline)
-
-	// --- Why It Exists Section ---
-	// Analyze process ancestry and source with a 2 second timeout
-	result, _ := why.AnalyzeWithTimeout(pid, 2*time.Second)
-	if result != nil {
-		fmt.Fprintf(&b, "\n  ─────────────────────────────────────\n")
-		fmt.Fprintf(&b, "  Why It Exists:\n")
-
-		// Format ancestry chain
-		if len(result.Ancestry) > 0 {
-			fmt.Fprintf(&b, "    %s\n", why.FormatAncestryChain(result.Ancestry))
-		}
-
-		// Source information (always show, even if unknown)
-		sourceStr := string(result.Source.Type)
-		if sourceStr == "" {
-			sourceStr = string(why.SourceUnknown)
-		}
-		sourceName := result.Source.Name
-		if result.Source.Type == why.SourceSystemd || result.Source.Type == why.SourceLaunchd {
-			sourceName = ""
-		}
-		if result.Source.Type == why.SourceDocker {
-			sourceName = ""
-		}
-		if sourceName != "" && sourceName != sourceStr {
-			fmt.Fprintf(&b, "\n  Source:\t%s (%s)\n", sourceName, sourceStr)
-		} else {
-			fmt.Fprintf(&b, "\n  Source:\t%s\n", sourceStr)
-		}
-		if (result.Source.Type == why.SourceSystemd || result.Source.Type == why.SourceLaunchd) && result.Source.Name != "" {
-			fmt.Fprintf(&b, "  Service:\t%s\n", result.Source.Name)
-		}
-		if result.ContainerID != "" {
-			fmt.Fprintf(&b, "  Container:\t%s\n", result.ContainerID)
-		}
-
-		// Working directory
-		if result.WorkingDir != "" {
-			fmt.Fprintf(&b, "  Working Dir:\t%s\n", result.WorkingDir)
-		}
-
-		// Git information (if available)
-		if result.GitRepo != "" {
-			if result.GitBranch != "" {
-				fmt.Fprintf(&b, "  Git Repo:\t%s (%s)\n", result.GitRepo, result.GitBranch)
-			} else {
-				fmt.Fprintf(&b, "  Git Repo:\t%s\n", result.GitRepo)
-			}
-		}
-		fmt.Fprintf(&b, "  Restart Count:\t%d\n", result.RestartCount)
-
-		contextLines := buildContextLines(p, ports, hasPublicListener)
-		if len(contextLines) > 0 {
-			fmt.Fprintf(&b, "\n  Context:\n")
-			for _, line := range contextLines {
-				fmt.Fprintf(&b, "  %s\n", line)
-			}
-		}
-
-		// Warnings
-		warnings := result.Warnings
-		if hasPublicListener {
-			warnings = append(warnings, "Process is listening on a public interface (0.0.0.0/::)")
-		}
-		if len(warnings) > 0 {
-			fmt.Fprintf(&b, "\n  Warnings:\n")
-			for _, warning := range warnings {
-				fmt.Fprintf(&b, "  ⚠ %s\n", warning)
-			}
-		}
-
-		fmt.Fprintf(&b, "  ─────────────────────────────────────\n")
-	}
+	writeBaseDetails(&b, details, ports)
+	appendWhySection(&b, pid, p, ports, hasPublicListener)
 
 	return b.String(), nil
+}
+
+type processDetails struct {
+	user       string
+	name       string
+	cpuPercent float64
+	memPercent float32
+	startTime  string
+	pid        int32
+	exe        string
+	cmdline    string
+}
+
+func collectProcessDetails(p *process.Process) processDetails {
+	return processDetails{
+		user:       fetchUsername(p),
+		name:       fetchName(p),
+		cpuPercent: sampleCPUPercent(p),
+		memPercent: fetchMemoryPercent(p),
+		startTime:  fetchStartTime(p),
+		pid:        p.Pid,
+		exe:        fetchExe(p),
+		cmdline:    fetchCmdline(p),
+	}
+}
+
+func fetchUsername(p *process.Process) string {
+	user, err := p.Username()
+	if err != nil {
+		return "n/a"
+	}
+	return user
+}
+
+func sampleCPUPercent(p *process.Process) float64 {
+	// 第一次采样常为 0；进行一次短间隔的二次采样以获得更可信的数值。
+	if v, err := p.CPUPercent(); err == nil && v > 0 {
+		return v
+	}
+	time.Sleep(200 * time.Millisecond)
+	if v2, err2 := p.CPUPercent(); err2 == nil {
+		return v2
+	}
+	return 0.0
+}
+
+func fetchMemoryPercent(p *process.Process) float32 {
+	memPercent, err := p.MemoryPercent()
+	if err != nil {
+		return 0.0
+	}
+	return memPercent
+}
+
+func fetchStartTime(p *process.Process) string {
+	createTime, err := p.CreateTime() // returns millis since epoch
+	if err != nil {
+		return "n/a"
+	}
+	return time.Unix(createTime/1000, 0).Format("Jan 02 15:04")
+}
+
+func fetchName(p *process.Process) string {
+	name, err := p.Name()
+	if err != nil {
+		return "n/a"
+	}
+	return name
+}
+
+func fetchExe(p *process.Process) string {
+	exe, err := p.Exe()
+	if err != nil {
+		return "(permission denied or n/a)"
+	}
+	return exe
+}
+
+func fetchCmdline(p *process.Process) string {
+	cmdline, err := p.Cmdline()
+	if err != nil || cmdline == "" {
+		return "(n/a)"
+	}
+	return cmdline
+}
+
+func scanProcessPorts(p *process.Process) ([]uint32, bool) {
+	if !shouldScanPorts() {
+		return nil, false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), portScanTimeout())
+	defer cancel()
+	ports, public := getProcessListenerInfoCtx(ctx, p)
+	return ports, public
+}
+
+func writeBaseDetails(b *strings.Builder, details processDetails, ports []uint32) {
+	fmt.Fprintf(b, "  User:\t%s\n", details.user)
+	fmt.Fprintf(b, "  Name:\t%s\n", details.name)
+	fmt.Fprintf(b, "  %%CPU:\t%.1f\n", details.cpuPercent)
+	fmt.Fprintf(b, "  %%MEM:\t%.1f\n", details.memPercent)
+	fmt.Fprintf(b, "  Start:\t%s\n", details.startTime)
+	if len(ports) > 0 {
+		fmt.Fprintf(b, "  Ports:\t%s\n", formatPorts(ports))
+	}
+	fmt.Fprintf(b, "  Target:\t%s\n", formatTargetSummary(details.name, int(details.pid), ports))
+	fmt.Fprintf(b, "  PID:\t%d\n", details.pid)
+	fmt.Fprintf(b, "  Exe:\t%s\n", details.exe)
+	fmt.Fprintf(b, "  Command:\t%s\n", details.cmdline)
+}
+
+func appendWhySection(b *strings.Builder, pid int, p *process.Process, ports []uint32, hasPublicListener bool) {
+	// Analyze process ancestry and source with a 2 second timeout.
+	result, _ := why.AnalyzeWithTimeout(pid, 2*time.Second)
+	if result == nil {
+		return
+	}
+
+	writeWhyHeader(b)
+	appendAncestryChain(b, result)
+	appendSourceDetails(b, result)
+	appendWorkingDir(b, result)
+	appendGitDetails(b, result)
+	fmt.Fprintf(b, "  Restart Count:\t%d\n", result.RestartCount)
+	appendContextSection(b, p, ports, hasPublicListener)
+	appendWarningsSection(b, result, hasPublicListener)
+	writeWhyFooter(b)
+}
+
+func writeWhyHeader(b *strings.Builder) {
+	fmt.Fprintf(b, "\n  ─────────────────────────────────────\n")
+	fmt.Fprintf(b, "  Why It Exists:\n")
+}
+
+func writeWhyFooter(b *strings.Builder) {
+	fmt.Fprintf(b, "  ─────────────────────────────────────\n")
+}
+
+func appendAncestryChain(b *strings.Builder, result *why.AnalysisResult) {
+	if len(result.Ancestry) == 0 {
+		return
+	}
+	fmt.Fprintf(b, "    %s\n", why.FormatAncestryChain(result.Ancestry))
+}
+
+func appendSourceDetails(b *strings.Builder, result *why.AnalysisResult) {
+	sourceLine := formatSourceLine(result.Source)
+	fmt.Fprintf(b, "\n  Source:\t%s\n", sourceLine)
+	if needsServiceLine(result.Source) {
+		fmt.Fprintf(b, "  Service:\t%s\n", result.Source.Name)
+	}
+	if result.ContainerID != "" {
+		fmt.Fprintf(b, "  Container:\t%s\n", result.ContainerID)
+	}
+}
+
+func formatSourceLine(source why.Source) string {
+	sourceStr := string(source.Type)
+	if sourceStr == "" {
+		sourceStr = string(why.SourceUnknown)
+	}
+	sourceName := source.Name
+	if source.Type == why.SourceSystemd || source.Type == why.SourceLaunchd || source.Type == why.SourceDocker {
+		sourceName = ""
+	}
+	if sourceName != "" && sourceName != sourceStr {
+		return fmt.Sprintf("%s (%s)", sourceName, sourceStr)
+	}
+	return sourceStr
+}
+
+func needsServiceLine(source why.Source) bool {
+	if source.Name == "" {
+		return false
+	}
+	return source.Type == why.SourceSystemd || source.Type == why.SourceLaunchd
+}
+
+func appendWorkingDir(b *strings.Builder, result *why.AnalysisResult) {
+	if result.WorkingDir == "" {
+		return
+	}
+	fmt.Fprintf(b, "  Working Dir:\t%s\n", result.WorkingDir)
+}
+
+func appendGitDetails(b *strings.Builder, result *why.AnalysisResult) {
+	if result.GitRepo == "" {
+		return
+	}
+	if result.GitBranch != "" {
+		fmt.Fprintf(b, "  Git Repo:\t%s (%s)\n", result.GitRepo, result.GitBranch)
+		return
+	}
+	fmt.Fprintf(b, "  Git Repo:\t%s\n", result.GitRepo)
+}
+
+func appendContextSection(b *strings.Builder, p *process.Process, ports []uint32, hasPublicListener bool) {
+	contextLines := buildContextLines(p, ports, hasPublicListener)
+	if len(contextLines) == 0 {
+		return
+	}
+	fmt.Fprintf(b, "\n  Context:\n")
+	for _, line := range contextLines {
+		fmt.Fprintf(b, "  %s\n", line)
+	}
+}
+
+func appendWarningsSection(b *strings.Builder, result *why.AnalysisResult, hasPublicListener bool) {
+	warnings := result.Warnings
+	if hasPublicListener {
+		warnings = append(warnings, "Process is listening on a public interface (0.0.0.0/::)")
+	}
+	if len(warnings) == 0 {
+		return
+	}
+	fmt.Fprintf(b, "\n  Warnings:\n")
+	for _, warning := range warnings {
+		fmt.Fprintf(b, "  ⚠ %s\n", warning)
+	}
 }
 
 func formatTargetSummary(name string, pid int, ports []uint32) string {

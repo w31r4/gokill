@@ -7,74 +7,65 @@ import (
 )
 
 func TestDetectGitInfo(t *testing.T) {
-	// Create temp dir structure
+	tmpDir := tempDir(t)
+
+	repoDir := setupRepo(t, tmpDir, "myrepo", "ref: refs/heads/main\n")
+	assertGitInfo(t, repoDir, "myrepo", "main", "standard repo")
+
+	subDir := filepath.Join(repoDir, "src", "cmd")
+	ensureDir(t, subDir)
+	assertGitInfo(t, subDir, "myrepo", "main", "subdir")
+	assertGitInfo(t, subDir, "myrepo", "main", "repeated lookup")
+
+	detachedDir := setupRepo(t, tmpDir, "detached", "a1b2c3d4e5\n")
+	assertGitInfo(t, detachedDir, "detached", "a1b2c3d", "detached HEAD")
+
+	notRepoDir := filepath.Join(tmpDir, "notrepo")
+	ensureDir(t, notRepoDir)
+	assertGitInfo(t, notRepoDir, "", "", "not a repo")
+}
+
+func tempDir(t *testing.T) string {
+	t.Helper()
+
 	tmpDir, err := os.MkdirTemp("", "gkill-test-git")
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer os.RemoveAll(tmpDir)
+	t.Cleanup(func() {
+		_ = os.RemoveAll(tmpDir)
+	})
+	return tmpDir
+}
 
-	// Case 1: Standard Repo
-	repoDir := filepath.Join(tmpDir, "myrepo")
+func setupRepo(t *testing.T, baseDir, name, headContents string) string {
+	t.Helper()
+
+	repoDir := filepath.Join(baseDir, name)
 	gitDir := filepath.Join(repoDir, ".git")
-	if err := os.MkdirAll(gitDir, 0755); err != nil {
+	ensureDir(t, gitDir)
+	if err := os.WriteFile(filepath.Join(gitDir, "HEAD"), []byte(headContents), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(gitDir, "HEAD"), []byte("ref: refs/heads/main\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
+	return repoDir
+}
 
-	repo, branch := detectGitInfo(repoDir)
-	if repo != "myrepo" {
-		t.Errorf("expected repo 'myrepo', got '%s'", repo)
-	}
-	if branch != "main" {
-		t.Errorf("expected branch 'main', got '%s'", branch)
-	}
+func ensureDir(t *testing.T, path string) {
+	t.Helper()
 
-	// Case 2: Subdirectory
-	subDir := filepath.Join(repoDir, "src", "cmd")
-	if err := os.MkdirAll(subDir, 0755); err != nil {
+	if err := os.MkdirAll(path, 0755); err != nil {
 		t.Fatal(err)
 	}
-	repo, branch = detectGitInfo(subDir)
-	if repo != "myrepo" {
-		t.Errorf("expected repo 'myrepo' from subdir, got '%s'", repo)
-	}
-	if branch != "main" {
-		t.Errorf("expected branch 'main' from subdir, got '%s'", branch)
-	}
+}
 
-	// Case 2b: Repeated lookup should remain stable (and exercises cache paths).
-	repo2, branch2 := detectGitInfo(subDir)
-	if repo2 != "myrepo" || branch2 != "main" {
-		t.Errorf("expected repeated lookup to return 'myrepo','main', got '%s','%s'", repo2, branch2)
-	}
+func assertGitInfo(t *testing.T, path, wantRepo, wantBranch, label string) {
+	t.Helper()
 
-	// Case 3: Detached HEAD
-	detachedDir := filepath.Join(tmpDir, "detached")
-	dGitDir := filepath.Join(detachedDir, ".git")
-	if err := os.MkdirAll(dGitDir, 0755); err != nil {
-		t.Fatal(err)
+	repo, branch := detectGitInfo(path)
+	if repo != wantRepo {
+		t.Errorf("%s: expected repo '%s', got '%s'", label, wantRepo, repo)
 	}
-	if err := os.WriteFile(filepath.Join(dGitDir, "HEAD"), []byte("a1b2c3d4e5\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	repo, branch = detectGitInfo(detachedDir)
-	if repo != "detached" {
-		t.Errorf("expected repo 'detached', got '%s'", repo)
-	}
-	if branch != "a1b2c3d" { // Check for truncated SHA
-		t.Errorf("expected branch 'a1b2c3d', got '%s'", branch)
-	}
-
-	// Case 4: Not a repo
-	notRepoDir := filepath.Join(tmpDir, "notrepo")
-	if err := os.MkdirAll(notRepoDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	repo, branch = detectGitInfo(notRepoDir)
-	if repo != "" || branch != "" {
-		t.Errorf("expected empty result for non-repo, got '%s', '%s'", repo, branch)
+	if branch != wantBranch {
+		t.Errorf("%s: expected branch '%s', got '%s'", label, wantBranch, branch)
 	}
 }

@@ -8,56 +8,27 @@ import (
 // detectSource attempts to identify the source/supervisor of a process.
 // It checks the ancestry chain for known supervisors.
 func detectSource(ctx context.Context, ancestry []ProcessInfo) Source {
-	if err := ctx.Err(); err != nil {
-		return Source{Type: SourceUnknown, Confidence: 0.0}
+	if err := ctx.Err(); err != nil || len(ancestry) == 0 {
+		return unknownSource()
 	}
 
-	if len(ancestry) == 0 {
-		return Source{Type: SourceUnknown, Confidence: 0.0}
+	detectors := []func() *Source{
+		func() *Source { return detectContainer(ancestry, "") },
+		func() *Source { return detectSupervisor(ancestry) },
+		func() *Source { return detectCron(ancestry) },
+		func() *Source { return detectSystemdFromAncestry(ancestry) },
+		func() *Source { return detectLaunchdFromAncestry(ancestry) },
+		func() *Source { return detectShell(ancestry) },
 	}
 
-	// Collect candidates and pick the best one using a stable priority order,
-	// then confidence as a tie-breaker.
-	var candidates []*Source
-
-	// Phase 2 detectors (best-effort; may return nil on unsupported platforms)
-	if err := ctx.Err(); err != nil {
-		return Source{Type: SourceUnknown, Confidence: 0.0}
-	}
-	if src := detectContainer(ancestry, ""); src != nil {
-		candidates = append(candidates, src)
-	}
-	if err := ctx.Err(); err != nil {
-		return Source{Type: SourceUnknown, Confidence: 0.0}
-	}
-	if src := detectSupervisor(ancestry); src != nil {
-		candidates = append(candidates, src)
-	}
-	if err := ctx.Err(); err != nil {
-		return Source{Type: SourceUnknown, Confidence: 0.0}
-	}
-	if src := detectCron(ancestry); src != nil {
-		candidates = append(candidates, src)
-	}
-
-	// Existing detectors
-	if err := ctx.Err(); err != nil {
-		return Source{Type: SourceUnknown, Confidence: 0.0}
-	}
-	if src := detectSystemdFromAncestry(ancestry); src != nil {
-		candidates = append(candidates, src)
-	}
-	if err := ctx.Err(); err != nil {
-		return Source{Type: SourceUnknown, Confidence: 0.0}
-	}
-	if src := detectLaunchdFromAncestry(ancestry); src != nil {
-		candidates = append(candidates, src)
-	}
-	if err := ctx.Err(); err != nil {
-		return Source{Type: SourceUnknown, Confidence: 0.0}
-	}
-	if src := detectShell(ancestry); src != nil {
-		candidates = append(candidates, src)
+	candidates := make([]*Source, 0, len(detectors))
+	for _, detect := range detectors {
+		if err := ctx.Err(); err != nil {
+			return unknownSource()
+		}
+		if src := detect(); src != nil {
+			candidates = append(candidates, src)
+		}
 	}
 
 	if best := pickBestSource(candidates); best != nil {
@@ -65,6 +36,10 @@ func detectSource(ctx context.Context, ancestry []ProcessInfo) Source {
 	}
 
 	return Source{Type: SourceUnknown, Confidence: 0.2}
+}
+
+func unknownSource() Source {
+	return Source{Type: SourceUnknown, Confidence: 0.0}
 }
 
 func pickBestSource(candidates []*Source) *Source {
