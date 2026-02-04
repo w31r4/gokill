@@ -26,7 +26,7 @@ var envVarRules = []envSuspiciousRule{
 	},
 }
 
-func extraWarnings(r *AnalysisResult) []string {
+func commonWarnings(r *AnalysisResult) []string {
 	if r == nil {
 		return nil
 	}
@@ -44,8 +44,6 @@ func extraWarnings(r *AnalysisResult) []string {
 	if isSuspiciousWorkingDir(r.WorkingDir) {
 		w = append(w, "Process is running from a suspicious working directory: "+r.WorkingDir)
 	}
-
-	w = append(w, envSuspiciousWarnings(r.Env)...)
 
 	return w
 }
@@ -106,4 +104,3 @@ func envSuspiciousWarnings(env []string) []string {
 
 	return warnings
 }
-

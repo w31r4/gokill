@@ -27,15 +27,14 @@ func TestEnvSuspiciousWarnings(t *testing.T) {
 	})
 }
 
-func TestExtraWarnings(t *testing.T) {
+func TestCommonWarnings(t *testing.T) {
 	r := &AnalysisResult{
 		Source:     Source{Type: SourceUnknown},
 		WorkingDir: "/tmp",
-		Env:        []string{"LD_PRELOAD=/tmp/x.so"},
 		ExeDeleted: true,
 	}
 
-	w := extraWarnings(r)
+	w := commonWarnings(r)
 	joined := strings.Join(w, "\n")
 	if !strings.Contains(joined, "deleted binary") {
 		t.Fatalf("expected deleted-binary warning, got: %#v", w)
@@ -46,8 +45,4 @@ func TestExtraWarnings(t *testing.T) {
 	if !strings.Contains(joined, "suspicious working directory") {
 		t.Fatalf("expected working-dir warning, got: %#v", w)
 	}
-	if !strings.Contains(joined, "LD_PRELOAD") {
-		t.Fatalf("expected env warning, got: %#v", w)
-	}
 }
-

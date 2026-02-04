@@ -68,6 +68,17 @@ func (c *cachedAnalyzer) Analyze(ctx context.Context, pid int) (*AnalysisResult,
 	return result, nil
 }
 
+func (c *cachedAnalyzer) AnalyzeWithOptions(ctx context.Context, pid int, opts AnalyzeOptions) (*AnalysisResult, error) {
+	result, err := c.Analyze(ctx, pid)
+	if result == nil || (!opts.CollectEnv && !opts.EnvWarnings) {
+		return result, err
+	}
+
+	clone := cloneAnalysisResult(result)
+	clone = applyEnvOptions(ctx, clone, pid, opts)
+	return clone, err
+}
+
 func (c *cachedAnalyzer) cacheResult(key cacheKey, result *AnalysisResult, now time.Time) {
 	if c.maxSize <= 0 {
 		return
@@ -145,13 +156,6 @@ func (a *baseAnalyzer) Analyze(ctx context.Context, pid int) (*AnalysisResult, e
 		result.WorkingDir = ancestry[len(ancestry)-1].WorkingDir
 	}
 
-	// Read environment variables (best-effort).
-	if env, envErr := readProcessEnv(pid); envErr == nil {
-		result.Env = env
-	} else {
-		result.EnvError = envErr.Error()
-	}
-
 	// Detect if the process is running from a deleted binary (best-effort, Linux-only).
 	result.ExeDeleted = isProcessExeDeleted(pid)
 
@@ -183,7 +187,8 @@ func (a *baseAnalyzer) Analyze(ctx context.Context, pid int) (*AnalysisResult, e
 	if shouldWarnRestart(result.RestartCount) {
 		result.Warnings = append(result.Warnings, restartWarning(result.RestartCount))
 	}
-	result.Warnings = append(result.Warnings, extraWarnings(result)...)
+	result.Warnings = append(result.Warnings, commonWarnings(result)...)
+	result.Warnings = dedupeStringsPreserveOrder(result.Warnings)
 
 	if err != nil {
 		// Return partial result even on error

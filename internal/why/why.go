@@ -77,9 +77,90 @@ func Analyze(ctx context.Context, pid int) (*AnalysisResult, error) {
 	return DefaultAnalyzer.Analyze(ctx, pid)
 }
 
+type AnalyzeOptions struct {
+	// CollectEnv controls whether the full environment is included in the result.
+	// Env values may contain secrets; callers should prefer redaction at render time.
+	CollectEnv bool
+
+	// EnvWarnings controls whether env-based suspicious indicators are checked and appended to warnings.
+	// When enabled, the analyzer may read the process environment best-effort even if CollectEnv is false.
+	EnvWarnings bool
+}
+
+// AnalyzeWithOptions is like Analyze, but allows optional collectors that should not be cached by default.
+func AnalyzeWithOptions(ctx context.Context, pid int, opts AnalyzeOptions) (*AnalysisResult, error) {
+	if a, ok := DefaultAnalyzer.(*cachedAnalyzer); ok {
+		return a.AnalyzeWithOptions(ctx, pid, opts)
+	}
+
+	result, err := Analyze(ctx, pid)
+	if result == nil || (!opts.CollectEnv && !opts.EnvWarnings) {
+		return result, err
+	}
+
+	clone := cloneAnalysisResult(result)
+	clone = applyEnvOptions(ctx, clone, pid, opts)
+	return clone, err
+}
+
 // AnalyzeWithTimeout is a convenience function that adds a timeout to the analysis.
 func AnalyzeWithTimeout(pid int, timeout time.Duration) (*AnalysisResult, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-	return Analyze(ctx, pid)
+	return AnalyzeWithOptions(ctx, pid, AnalyzeOptions{CollectEnv: true, EnvWarnings: true})
+}
+
+func AnalyzeWithTimeoutOptions(pid int, timeout time.Duration, opts AnalyzeOptions) (*AnalysisResult, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	return AnalyzeWithOptions(ctx, pid, opts)
+}
+
+func cloneAnalysisResult(r *AnalysisResult) *AnalysisResult {
+	if r == nil {
+		return nil
+	}
+
+	clone := *r
+	if len(r.Ancestry) > 0 {
+		clone.Ancestry = append([]ProcessInfo(nil), r.Ancestry...)
+	}
+	if len(r.Env) > 0 {
+		clone.Env = append([]string(nil), r.Env...)
+	}
+	if len(r.Warnings) > 0 {
+		clone.Warnings = append([]string(nil), r.Warnings...)
+	}
+	return &clone
+}
+
+func applyEnvOptions(ctx context.Context, r *AnalysisResult, pid int, opts AnalyzeOptions) *AnalysisResult {
+	if r == nil || pid <= 0 || (!opts.CollectEnv && !opts.EnvWarnings) {
+		return r
+	}
+
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	envCtx, cancel := context.WithTimeout(ctx, defaultEnvReadTimeout)
+	defer cancel()
+
+	env, envErr := readProcessEnvWithContext(envCtx, pid, defaultEnvMaxBytes, defaultEnvMaxVars)
+	if envErr != nil && opts.CollectEnv {
+		r.EnvError = envErr.Error()
+	}
+	if len(env) == 0 {
+		return r
+	}
+
+	if opts.EnvWarnings {
+		r.Warnings = append(r.Warnings, envSuspiciousWarnings(env)...)
+		r.Warnings = dedupeStringsPreserveOrder(r.Warnings)
+	}
+
+	if opts.CollectEnv {
+		r.Env = env
+	}
+
+	return r
 }
