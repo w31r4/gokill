@@ -2,6 +2,7 @@ package why
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"time"
 )
@@ -144,6 +145,24 @@ func (a *baseAnalyzer) Analyze(ctx context.Context, pid int) (*AnalysisResult, e
 		result.WorkingDir = ancestry[len(ancestry)-1].WorkingDir
 	}
 
+	// Read environment variables (best-effort).
+	if env, envErr := readProcessEnv(pid); envErr == nil {
+		result.Env = env
+	} else {
+		result.EnvError = envErr.Error()
+	}
+
+	// Detect if the process is running from a deleted binary (best-effort, Linux-only).
+	result.ExeDeleted = isProcessExeDeleted(pid)
+
+	// Resolve systemd unit name (Linux-only, best-effort).
+	if len(ancestry) > 0 {
+		root := ancestry[0]
+		if root.PID == 1 && strings.Contains(strings.ToLower(root.Command), "systemd") {
+			result.SystemdUnit = resolveSystemdUnit(ctx, pid)
+		}
+	}
+
 	// Detect source
 	source := detectSource(ctx, ancestry)
 	result.Source = source
@@ -164,6 +183,7 @@ func (a *baseAnalyzer) Analyze(ctx context.Context, pid int) (*AnalysisResult, e
 	if shouldWarnRestart(result.RestartCount) {
 		result.Warnings = append(result.Warnings, restartWarning(result.RestartCount))
 	}
+	result.Warnings = append(result.Warnings, extraWarnings(result)...)
 
 	if err != nil {
 		// Return partial result even on error

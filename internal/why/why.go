@@ -50,6 +50,10 @@ type AnalysisResult struct {
 	WorkingDir   string        // Working directory of target process
 	GitRepo      string        // Git repository name (if applicable)
 	GitBranch    string        // Git branch (if applicable)
+	SystemdUnit  string        // systemd unit name (best-effort, Linux-only)
+	Env          []string      // Environment variables (key=value, best-effort)
+	EnvError     string        // Environment read error (best-effort)
+	ExeDeleted   bool          // True if executable is deleted (best-effort)
 	RestartCount int           // Consecutive restart count (best-effort)
 	ContainerID  string        // Container identifier (best-effort)
 	Warnings     []string      // Health/security warnings

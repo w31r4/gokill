@@ -378,6 +378,7 @@ func appendWhySection(b *strings.Builder, pid int, p *process.Process, ports []u
 	fmt.Fprintf(b, "  Restart Count:\t%d\n", result.RestartCount)
 	appendContextSection(b, p, ports, hasPublicListener)
 	appendWarningsSection(b, result, hasPublicListener)
+	appendEnvSection(b, result)
 	writeWhyFooter(b)
 }
 
@@ -400,7 +401,9 @@ func appendAncestryChain(b *strings.Builder, result *why.AnalysisResult) {
 func appendSourceDetails(b *strings.Builder, result *why.AnalysisResult) {
 	sourceLine := formatSourceLine(result.Source)
 	fmt.Fprintf(b, "\n  Source:\t%s\n", sourceLine)
-	if needsServiceLine(result.Source) {
+	if result.SystemdUnit != "" {
+		fmt.Fprintf(b, "  Service:\t%s\n", result.SystemdUnit)
+	} else if needsServiceLine(result.Source) {
 		fmt.Fprintf(b, "  Service:\t%s\n", result.Source.Name)
 	}
 	if result.ContainerID != "" {
@@ -471,6 +474,48 @@ func appendWarningsSection(b *strings.Builder, result *why.AnalysisResult, hasPu
 	for _, warning := range warnings {
 		fmt.Fprintf(b, "  ⚠ %s\n", warning)
 	}
+}
+
+func appendEnvSection(b *strings.Builder, result *why.AnalysisResult) {
+	if result == nil {
+		return
+	}
+	if len(result.Env) == 0 && result.EnvError == "" {
+		return
+	}
+
+	fmt.Fprintf(b, "\n  Env:\n")
+
+	if len(result.Env) == 0 {
+		fmt.Fprintf(b, "  (unavailable: %s)\n", strings.TrimSpace(result.EnvError))
+		return
+	}
+
+	// Keep the output stable and bounded.
+	env := append([]string(nil), result.Env...)
+	sort.Strings(env)
+
+	const maxEnvLines = 30
+	limit := len(env)
+	if limit > maxEnvLines {
+		limit = maxEnvLines
+	}
+
+	for i := 0; i < limit; i++ {
+		fmt.Fprintf(b, "  %s\n", sanitizeEnvEntry(env[i]))
+	}
+	if len(env) > maxEnvLines {
+		fmt.Fprintf(b, "  … (%d more)\n", len(env)-maxEnvLines)
+	}
+}
+
+func sanitizeEnvEntry(s string) string {
+	// Make env display safe for our line-based formatter.
+	s = strings.ReplaceAll(s, "\n", "\\n")
+	s = strings.ReplaceAll(s, "\r", "\\r")
+	s = strings.ReplaceAll(s, "\t", "\\t")
+	s = strings.ReplaceAll(s, "\x1b", "") // strip ANSI ESC
+	return s
 }
 
 func formatTargetSummary(name string, pid int, ports []uint32) string {
