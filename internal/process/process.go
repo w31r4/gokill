@@ -239,6 +239,10 @@ func SendSignal(pid int, sig syscall.Signal) error {
 
 // GetProcessDetails returns detailed information about a process.
 func GetProcessDetails(pid int) (string, error) {
+	return GetProcessDetailsWithOptions(pid, DetailsOptions{ShowEnv: runtime.GOOS == "linux"})
+}
+
+func GetProcessDetailsWithOptions(pid int, opts DetailsOptions) (string, error) {
 	p, err := process.NewProcess(int32(pid))
 	if err != nil {
 		return "", fmt.Errorf("process with pid %d not found: %w", pid, err)
@@ -249,7 +253,7 @@ func GetProcessDetails(pid int) (string, error) {
 
 	var b strings.Builder
 	writeBaseDetails(&b, details, ports)
-	appendWhySection(&b, pid, p, ports, hasPublicListener)
+	appendWhySection(&b, pid, p, ports, hasPublicListener, opts)
 
 	return b.String(), nil
 }
@@ -363,9 +367,12 @@ func writeBaseDetails(b *strings.Builder, details processDetails, ports []uint32
 	fmt.Fprintf(b, "  Command:\t%s\n", details.cmdline)
 }
 
-func appendWhySection(b *strings.Builder, pid int, p *process.Process, ports []uint32, hasPublicListener bool) {
+func appendWhySection(b *strings.Builder, pid int, p *process.Process, ports []uint32, hasPublicListener bool, opts DetailsOptions) {
 	// Analyze process ancestry and source with a 2 second timeout.
-	result, _ := why.AnalyzeWithTimeout(pid, 2*time.Second)
+	result, _ := why.AnalyzeWithTimeoutOptions(pid, 2*time.Second, why.AnalyzeOptions{
+		CollectEnv:  opts.ShowEnv,
+		EnvWarnings: true,
+	})
 	if result == nil {
 		return
 	}
@@ -378,7 +385,8 @@ func appendWhySection(b *strings.Builder, pid int, p *process.Process, ports []u
 	fmt.Fprintf(b, "  Restart Count:\t%d\n", result.RestartCount)
 	appendContextSection(b, p, ports, hasPublicListener)
 	appendWarningsSection(b, result, hasPublicListener)
-	appendEnvSection(b, result)
+	appendVerboseSection(b, p, ports, hasPublicListener, opts)
+	appendEnvSection(b, result, opts)
 	writeWhyFooter(b)
 }
 
@@ -463,10 +471,11 @@ func appendContextSection(b *strings.Builder, p *process.Process, ports []uint32
 }
 
 func appendWarningsSection(b *strings.Builder, result *why.AnalysisResult, hasPublicListener bool) {
-	warnings := result.Warnings
+	warnings := append([]string(nil), result.Warnings...)
 	if hasPublicListener {
 		warnings = append(warnings, "Process is listening on a public interface (0.0.0.0/::)")
 	}
+	warnings = dedupeStringsPreserveOrder(warnings)
 	if len(warnings) == 0 {
 		return
 	}
@@ -476,19 +485,43 @@ func appendWarningsSection(b *strings.Builder, result *why.AnalysisResult, hasPu
 	}
 }
 
-func appendEnvSection(b *strings.Builder, result *why.AnalysisResult) {
+func dedupeStringsPreserveOrder(in []string) []string {
+	if len(in) < 2 {
+		return in
+	}
+	seen := make(map[string]struct{}, len(in))
+	out := in[:0]
+	for _, s := range in {
+		if _, ok := seen[s]; ok {
+			continue
+		}
+		seen[s] = struct{}{}
+		out = append(out, s)
+	}
+	return out
+}
+
+func appendEnvSection(b *strings.Builder, result *why.AnalysisResult, opts DetailsOptions) {
 	if result == nil {
 		return
 	}
-	if len(result.Env) == 0 && result.EnvError == "" {
+	if !opts.ShowEnv {
+		return
+	}
+	reason := sanitizeEnvError(result.EnvError)
+	if len(result.Env) == 0 && reason == "" {
 		return
 	}
 
 	fmt.Fprintf(b, "\n  Env:\n")
 
 	if len(result.Env) == 0 {
-		fmt.Fprintf(b, "  (unavailable: %s)\n", strings.TrimSpace(result.EnvError))
+		fmt.Fprintf(b, "  (unavailable: %s)\n", reason)
 		return
+	}
+
+	if reason != "" {
+		fmt.Fprintf(b, "  (partial: %s)\n", reason)
 	}
 
 	// Keep the output stable and bounded.
@@ -502,11 +535,22 @@ func appendEnvSection(b *strings.Builder, result *why.AnalysisResult) {
 	}
 
 	for i := 0; i < limit; i++ {
-		fmt.Fprintf(b, "  %s\n", sanitizeEnvEntry(env[i]))
+		fmt.Fprintf(b, "  %s\n", formatEnvEntry(env[i], opts.RevealEnvSecrets))
 	}
 	if len(env) > maxEnvLines {
 		fmt.Fprintf(b, "  … (%d more)\n", len(env)-maxEnvLines)
 	}
+}
+
+func formatEnvEntry(entry string, revealSecrets bool) string {
+	key, value, ok := strings.Cut(entry, "=")
+	if !ok {
+		return sanitizeEnvEntry(entry)
+	}
+	if !revealSecrets && shouldRedactEnvKey(key) {
+		value = "<redacted>"
+	}
+	return sanitizeEnvEntry(key + "=" + value)
 }
 
 func sanitizeEnvEntry(s string) string {
@@ -515,7 +559,21 @@ func sanitizeEnvEntry(s string) string {
 	s = strings.ReplaceAll(s, "\r", "\\r")
 	s = strings.ReplaceAll(s, "\t", "\\t")
 	s = strings.ReplaceAll(s, "\x1b", "") // strip ANSI ESC
+	s = truncateRunes(s, 220)
 	return s
+}
+
+func sanitizeEnvError(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return ""
+	}
+	s = strings.ReplaceAll(s, "\n", " ")
+	s = strings.ReplaceAll(s, "\r", " ")
+	s = strings.ReplaceAll(s, "\t", " ")
+	s = strings.ReplaceAll(s, "\x1b", "")
+	s = strings.Join(strings.Fields(s), " ")
+	return truncateRunes(s, 120)
 }
 
 func formatTargetSummary(name string, pid int, ports []uint32) string {
@@ -565,12 +623,15 @@ func formatSocketState(ports []uint32, hasPublicListener bool) string {
 func formatResourceContext(p *process.Process) string {
 	var parts []string
 
-	if memInfo, err := p.MemoryInfo(); err == nil && memInfo != nil && memInfo.RSS > 0 {
+	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
+	defer cancel()
+
+	if memInfo, err := p.MemoryInfoWithContext(ctx); err == nil && memInfo != nil && memInfo.RSS > 0 {
 		rssMB := float64(memInfo.RSS) / (1024 * 1024)
 		parts = append(parts, fmt.Sprintf("RSS %.1f MB", rssMB))
 	}
 
-	if threads, err := p.NumThreads(); err == nil && threads > 0 {
+	if threads, err := p.NumThreadsWithContext(ctx); err == nil && threads > 0 {
 		parts = append(parts, fmt.Sprintf("Threads %d", threads))
 	}
 
@@ -581,9 +642,12 @@ func formatResourceContext(p *process.Process) string {
 }
 
 func formatFileContext(p *process.Process) string {
-	files, err := p.OpenFiles()
-	if err != nil || len(files) == 0 {
+	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
+	defer cancel()
+
+	fds, err := p.NumFDsWithContext(ctx)
+	if err != nil || fds <= 0 {
 		return ""
 	}
-	return fmt.Sprintf("Open %d", len(files))
+	return fmt.Sprintf("FDs %d", fds)
 }

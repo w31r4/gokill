@@ -1,0 +1,58 @@
+//go:build linux
+
+package process
+
+import (
+	"context"
+	"strings"
+
+	"github.com/shirou/gopsutil/v3/process"
+)
+
+func verboseMemoryLine(ctx context.Context, p *process.Process) string {
+	if mem, err := p.MemoryInfoExWithContext(ctx); err == nil && mem != nil {
+		var parts []string
+		if mem.RSS > 0 {
+			parts = append(parts, "RSS "+formatBytesIEC(mem.RSS))
+		}
+		if mem.VMS > 0 {
+			parts = append(parts, "VMS "+formatBytesIEC(mem.VMS))
+		}
+		if mem.Shared > 0 {
+			parts = append(parts, "Shared "+formatBytesIEC(mem.Shared))
+		}
+		if mem.Text > 0 {
+			parts = append(parts, "Text "+formatBytesIEC(mem.Text))
+		}
+		if mem.Lib > 0 {
+			parts = append(parts, "Lib "+formatBytesIEC(mem.Lib))
+		}
+		if mem.Data > 0 {
+			parts = append(parts, "Data "+formatBytesIEC(mem.Data))
+		}
+		if mem.Dirty > 0 {
+			parts = append(parts, "Dirty "+formatBytesIEC(mem.Dirty))
+		}
+		if len(parts) == 0 {
+			return "Memory:\t(n/a)"
+		}
+		return "Memory:\t" + strings.Join(parts, " • ")
+	}
+
+	mem, err := p.MemoryInfoWithContext(ctx)
+	if err != nil || mem == nil {
+		return "Memory:\t" + unavailable(err)
+	}
+
+	var parts []string
+	if mem.RSS > 0 {
+		parts = append(parts, "RSS "+formatBytesIEC(mem.RSS))
+	}
+	if mem.VMS > 0 {
+		parts = append(parts, "VMS "+formatBytesIEC(mem.VMS))
+	}
+	if len(parts) == 0 {
+		return "Memory:\t(n/a)"
+	}
+	return "Memory:\t" + strings.Join(parts, " • ")
+}
