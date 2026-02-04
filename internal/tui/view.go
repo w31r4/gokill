@@ -143,7 +143,21 @@ func (m model) renderDetailsView() string {
 	// 渲染 viewport 内容
 	pane := detailPaneStyle.Render(m.detailsViewport.View())
 
-	help := detailHelpStyle.Render(" esc: back to list • up/down/pgup/pgdn: scroll")
+	verbose := "off"
+	if m.detailsVerbose {
+		verbose = "on"
+	}
+	env := "off"
+	if m.detailsShowEnv {
+		env = "on"
+	}
+	secrets := "off"
+	if m.detailsRevealSecrets {
+		secrets = "on"
+	}
+
+	helpText := " esc: back • ?: help • scroll: up/down/pgup/pgdn • v:verbose[" + verbose + "] • e:env[" + env + "] • s:secrets[" + secrets + "]"
+	help := detailHelpStyle.Render(helpText)
 	content := lipgloss.JoinVertical(lipgloss.Left, title, pane, help)
 	return docStyle.Render(content)
 }
@@ -441,7 +455,16 @@ func (m model) renderHelpView() string {
 	var b strings.Builder
 	title := helpTitleStyle.Render("Help / Commands")
 	fmt.Fprintln(&b, title)
-	if m.dep.mode {
+	if m.showDetails {
+		fmt.Fprintln(&b, helpPaneStyle.Render(strings.Join([]string{
+			"Details view:",
+			"  scroll: up/down/pgup/pgdn",
+			"  v: toggle verbose mode",
+			"  e: toggle env section",
+			"  s: toggle env secrets (when env is on)",
+			"  esc: back • ?: close help",
+		}, "\n")))
+	} else if m.dep.mode {
 		fmt.Fprintln(&b, helpPaneStyle.Render(strings.Join([]string{
 			"T-mode (dependency tree):",
 			"  up/down (j/k): move cursor",

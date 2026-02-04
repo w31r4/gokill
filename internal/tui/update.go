@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"runtime"
 	"strings"
 	"syscall"
 
@@ -45,16 +46,16 @@ func getProcesses() tea.Msg {
 
 // getProcessDetails 是一个命令工厂函数。它接收一个进程PID作为参数，
 // 并返回一个具体的 `tea.Cmd`（一个闭包函数）。这种模式使得创建带参数的命令变得非常方便。
-func getProcessDetails(pid int) tea.Cmd {
+func getProcessDetails(pid int, requestID int64, opts process.DetailsOptions) tea.Cmd {
 	return func() tea.Msg {
 		// 在这个 Goroutine 中执行获取进程详情的耗时操作。
-		details, err := process.GetProcessDetails(pid)
+		details, err := process.GetProcessDetailsWithOptions(pid, opts)
 		if err != nil {
 			// 如果操作失败，返回一个 `errMsg` 消息，将错误传递给 Update 函数。
 			return errMsg{err}
 		}
 		// 如果操作成功，返回一个 `processDetailsMsg` 消息，携带获取到的详情字符串。
-		return processDetailsMsg(details)
+		return processDetailsMsg{requestID: requestID, details: details}
 	}
 }
 
@@ -97,7 +98,11 @@ func (m model) updateProcessesLoaded(msg processesLoadedMsg) (tea.Model, tea.Cmd
 }
 
 func (m model) updateProcessDetails(msg processDetailsMsg) (tea.Model, tea.Cmd) {
-	m.processDetails = string(msg)
+	if msg.requestID != m.detailsRequestID {
+		return m, nil
+	}
+
+	m.processDetails = msg.details
 
 	vpHFrame, _ := m.detailsViewport.Style.GetFrameSize()
 	contentWidth := m.detailsViewport.Width - vpHFrame
@@ -204,49 +209,36 @@ func sendSignalWithStatus(pid int, sig syscall.Signal, status process.Status) te
 //   - `tea.Cmd`: 可能需要执行的新命令。
 //   - `bool`: `true` 表示按键已被当前模式完全处理；`false` 表示需要交由后续的默认逻辑处理。
 func (m model) updateKeyMsg(msg tea.KeyMsg) (model, tea.Cmd, bool) {
-	// 模式的检查顺序定义了它们的优先级。例如，帮助和确认对话框应该覆盖所有其他视图。
-	// 1. 帮助覆盖层
-	if m.helpOpen {
-		newModel, cmd := m.updateHelpKey(msg)
+	// 模式的检查顺序需要与 View 的渲染优先级保持一致，避免“界面显示 A，但按键处理走 B”的状态错位。
+	// Priority (high → low): error, confirm, help, details, dep-mode, search, main list.
+	if m.err != nil {
+		newModel, cmd := m.updateErrorKey(msg)
 		return newModel, cmd, true
 	}
-
-	// 2. 确认对话框覆盖层
 	if m.confirm != nil {
 		newModel, cmd := m.updateConfirmKey(msg)
 		return newModel, cmd, true
 	}
-
-	// 3. 依赖树模式 (T模式)
+	if m.helpOpen {
+		newModel, cmd := m.updateHelpKey(msg)
+		return newModel, cmd, true
+	}
+	if m.showDetails {
+		newModel, cmd := m.updateDetailsKey(msg)
+		return newModel, cmd, true
+	}
 	if m.dep.mode {
 		newModel, cmd, handled := m.updateDepModeKey(msg)
 		if handled {
 			return newModel, cmd, true
 		}
-		// 如果 T 模式没有完全处理该按键，它可能仍然修改了模型（例如，切换了内部过滤器），
-		// 所以我们需要使用它返回的新模型继续。
 		m = newModel
 	}
-
-	// 4. 错误信息覆盖层
-	if m.err != nil {
-		newModel, cmd := m.updateErrorKey(msg)
-		return newModel, cmd, true
-	}
-
-	// 5. 进程详情视图
-	if m.showDetails {
-		newModel, cmd := m.updateDetailsKey(msg)
-		return newModel, cmd, true
-	}
-
-	// 6. 主列表视图下的搜索框激活状态
 	if m.textInput.Focused() {
 		newModel, cmd := m.updateSearchKey(msg)
 		return newModel, cmd, true
 	}
 
-	// 7. 如果以上所有模式都未激活，则使用主列表的默认按键处理逻辑。
 	return m.updateMainListKey(msg)
 }
 
@@ -533,8 +525,29 @@ func (m model) updateDetailsKey(msg tea.KeyMsg) (model, tea.Cmd) {
 	case "esc":
 		m.showDetails = false
 		m.processDetails = "" // 清空详情内容，以便下次重新加载。
+		m.detailsPID = 0
+		m.detailsVerbose = false
+		m.detailsShowEnv = false
+		m.detailsRevealSecrets = false
+	case "?":
+		m.helpOpen = true
 	case "ctrl+c":
 		return m, tea.Quit
+	case "v":
+		m.detailsVerbose = !m.detailsVerbose
+		return m.reloadProcessDetails()
+	case "e":
+		m.detailsShowEnv = !m.detailsShowEnv
+		if !m.detailsShowEnv {
+			m.detailsRevealSecrets = false
+		}
+		return m.reloadProcessDetails()
+	case "s":
+		// Secret reveal only applies when env is visible.
+		if m.detailsShowEnv {
+			m.detailsRevealSecrets = !m.detailsRevealSecrets
+			return m.reloadProcessDetails()
+		}
 	}
 	// 将按键转发给 viewport
 	var cmd tea.Cmd
@@ -679,8 +692,30 @@ func (m model) enterDepMode(pid int32) model {
 func (m model) openProcessDetails(pid int32) (model, tea.Cmd) {
 	m.showDetails = true
 	m.processDetails = ""
+	m.detailsPID = pid
+	m.detailsVerbose = false
+	m.detailsShowEnv = runtime.GOOS == "linux"
+	m.detailsRevealSecrets = false
 	m.detailsViewport.SetContent("Loading...")
-	return m, getProcessDetails(int(pid))
+	return m.reloadProcessDetails()
+}
+
+func (m model) reloadProcessDetails() (model, tea.Cmd) {
+	if !m.showDetails || m.detailsPID <= 0 {
+		return m, nil
+	}
+
+	m.detailsRequestID++
+	m.detailsViewport.SetContent("Loading...")
+	m.detailsViewport.GotoTop()
+
+	opts := process.DetailsOptions{
+		Verbose:          m.detailsVerbose,
+		ShowEnv:          m.detailsShowEnv,
+		RevealEnvSecrets: m.detailsRevealSecrets,
+	}
+
+	return m, getProcessDetails(int(m.detailsPID), m.detailsRequestID, opts)
 }
 
 // max 是一个简单的辅助函数，返回两个整数中的较大者。

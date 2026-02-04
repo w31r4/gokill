@@ -30,8 +30,11 @@ type processesLoadedMsg struct {
 }
 
 // processDetailsMsg 是一条消息，用于携带从 `process.GetProcessDetails` 获取到的单个进程的详细信息。
-// 它的类型是字符串，因为详细信息已经被格式化为适合直接显示的文本。
-type processDetailsMsg string
+// requestID is used to ignore out-of-order responses when details are refreshed quickly.
+type processDetailsMsg struct {
+	requestID int64
+	details   string
+}
 
 // errMsg 是一条用于传递错误的专用消息。当任何命令（`tea.Cmd`）的执行过程中发生错误时，
 // 它应该返回一个 `errMsg` 消息，以便 `Update` 函数可以捕获这个错误并更新模型状态，
@@ -76,6 +79,16 @@ type model struct {
 	showDetails bool
 	// processDetails 存储从 `GetProcessDetails` 获取到的、准备在详情视图中显示的字符串。
 	processDetails string
+	// detailsPID is the PID currently shown in the details view.
+	detailsPID int32
+	// detailsRequestID increments on each details refresh to ignore out-of-order responses.
+	detailsRequestID int64
+	// detailsVerbose toggles deeper (bounded) data collection in the details view.
+	detailsVerbose bool
+	// detailsShowEnv toggles environment variable display in the details view.
+	detailsShowEnv bool
+	// detailsRevealSecrets controls whether env values are shown without redaction.
+	detailsRevealSecrets bool
 	// detailsViewport 是一个用于显示长文本内容的滚动视图组件。
 	detailsViewport viewport.Model
 	// portsOnly 是一个布尔标志，当为 `true` 时，主列表只显示那些正在监听端口的进程。
