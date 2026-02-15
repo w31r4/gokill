@@ -15,11 +15,12 @@ import (
 // 当用户执行一个危险操作（如杀死或暂停进程）时，我们会创建一个该结构体的实例，
 // 并将其赋值给 `model.confirm`，从而触发确认视图的显示。
 type confirmPrompt struct {
-	pid    int32          // 目标进程的PID。
-	name   string         // 目标进程的名称。
-	op     string         // 操作类型的可读描述，如 "kill", "pause", "resume"。
-	sig    syscall.Signal // 将要发送给进程的实际系统信号。
-	status process.Status // 操作成功后，进程应该更新到的新状态。
+	pid           int32          // 目标进程的PID。
+	name          string         // 目标进程的名称。
+	op            string         // 操作类型的可读描述，如 "kill", "pause", "resume", "docker stop"。
+	sig           syscall.Signal // 将要发送给进程的实际系统信号。
+	status        process.Status // 操作成功后，进程应该更新到的新状态。
+	containerName string         // Docker 容器名（非空时使用 docker stop）。
 }
 
 // Init 是 Bubble Tea 应用生命周期的一部分，在程序首次运行时被调用。
@@ -200,6 +201,17 @@ func sendSignalWithStatus(pid int, sig syscall.Signal, status process.Status) te
 	}
 }
 
+// stopContainer 是用于停止 Docker 容器的命令工厂。
+// 它调用 `docker stop` 而不是发送系统信号，因为 Docker 容器需要通过 Docker daemon 来正确停止。
+func stopContainer(pid int, containerName string) tea.Cmd {
+	return func() tea.Msg {
+		if err := process.StopContainer(containerName); err != nil {
+			return errMsg{err}
+		}
+		return signalOKMsg{pid: pid, status: process.Killed}
+	}
+}
+
 // updateKeyMsg 是一个关键的调度函数，它根据当前的UI模式（如帮助、确认、依赖树等）
 // 将接收到的 `tea.KeyMsg` 分发给相应的子处理函数。
 // 这种分层处理使得每个模式的按键逻辑可以被独立管理，大大降低了 `Update` 函数的复杂性。
@@ -260,7 +272,10 @@ func (m model) updateConfirmKey(msg tea.KeyMsg) (model, tea.Cmd) {
 	case "y", "enter":
 		op := *m.confirm // 复制确认操作的上下文
 		m.confirm = nil  // 清除确认状态，关闭对话框
-		// 返回一个命令来实际执行信号发送
+		// 如果是 Docker 容器，使用 docker stop；否则发送系统信号。
+		if op.containerName != "" {
+			return m, stopContainer(int(op.pid), op.containerName)
+		}
 		return m, sendSignalWithStatus(int(op.pid), op.sig, op.status)
 	case "n", "esc":
 		m.confirm = nil // 取消操作，关闭对话框
@@ -364,7 +379,11 @@ func (m model) handleDepModeActionKey(msg tea.KeyMsg) (model, tea.Cmd, bool) {
 	case "x":
 		if ln, ok := m.depLineAtCursor(); ok {
 			if it := m.findProcess(ln.pid); it != nil {
-				m.confirm = &confirmPrompt{pid: ln.pid, name: it.Executable, op: "kill", sig: syscall.SIGTERM, status: process.Killed}
+				if it.ContainerName != "" {
+					m.confirm = &confirmPrompt{pid: ln.pid, name: it.ContainerName, op: "docker stop", sig: syscall.SIGTERM, status: process.Killed, containerName: it.ContainerName}
+				} else {
+					m.confirm = &confirmPrompt{pid: ln.pid, name: it.Executable, op: "kill", sig: syscall.SIGTERM, status: process.Killed}
+				}
 			}
 		}
 		return m, nil, true
@@ -648,6 +667,9 @@ func (m model) handleMainListActionKey(msg tea.KeyMsg) (model, tea.Cmd, bool) {
 	switch msg.String() {
 	case "enter":
 		if p, ok := m.selectedProcess(); ok {
+			if p.ContainerName != "" {
+				return m, stopContainer(int(p.Pid), p.ContainerName), true
+			}
 			return m, sendSignalWithStatus(int(p.Pid), syscall.SIGTERM, process.Killed), true
 		}
 		return m, nil, false
