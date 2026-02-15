@@ -73,6 +73,8 @@ var (
 	portHeaderStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Bold(true).Underline(true)
 	// portNumberStyle for the port numbers (Green)
 	portNumberStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("46"))
+	// containerStyle for Docker container names (Cyan, Bold)
+	containerStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("45")).Bold(true)
 )
 
 // 定义了不同列表视图的“视口”（Viewport）高度，即一次在屏幕上显示多少行。
@@ -356,8 +358,19 @@ func (m model) renderProcessPane() string {
 		pidStr := pidStyle.Render(fmt.Sprintf("%d", p.Pid))
 		timeStr := timeStyle.Width(8).Render(p.StartTime)
 		// Truncate the command to 20 characters to preserve layout
-		truncatedCmd := truncate(p.Executable, 20)
-		cmdStr := commandStyle.Width(20).Render(truncatedCmd)
+		var displayName string
+		if p.ContainerName != "" {
+			displayName = "🐳 " + p.ContainerName
+		} else {
+			displayName = p.Executable
+		}
+		truncatedCmd := truncate(displayName, 20)
+		var cmdStr string
+		if p.ContainerName != "" {
+			cmdStr = containerStyle.Width(20).Render(truncatedCmd)
+		} else {
+			cmdStr = commandStyle.Width(20).Render(truncatedCmd)
+		}
 
 		// Construct the line manually to preserve styles
 		// Format: [Status] Command StartTime User PID
@@ -420,6 +433,11 @@ func (m model) renderPortPane() string {
 		for _, port := range p.Ports {
 			fmt.Fprintln(&b, portNumberStyle.Render(fmt.Sprintf("%d", port)))
 		}
+	}
+
+	if p.ContainerName != "" {
+		fmt.Fprintln(&b, "")
+		fmt.Fprintln(&b, containerStyle.Render("🐳 "+p.ContainerName))
 	}
 
 	fmt.Fprintln(&b, "")
