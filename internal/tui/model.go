@@ -147,13 +147,17 @@ type fuzzyProcessSource struct {
 
 // String 是 `fuzzy.Source` 接口要求的方法。
 // 它返回在给定索引 `i` 处的项目的字符串表示形式，模糊搜索将在这个字符串上进行匹配。
-// 为了让用户可以同时通过进程名、PID、用户名或端口号进行搜索，我们将这几项信息拼接成一个单一的字符串。
+// 为了让用户可以同时通过进程名、PID、用户名、端口号或容器名进行搜索，我们将这几项信息拼接成一个单一的字符串。
 func (s fuzzyProcessSource) String(i int) string {
 	p := s.processes[i]
-	if ports := portsForSearch(p.Ports); ports != "" {
-		return fmt.Sprintf("%s %s %d %s", p.Executable, p.User, p.Pid, ports)
+	base := fmt.Sprintf("%s %s %d", p.Executable, p.User, p.Pid)
+	if p.ContainerName != "" {
+		base += " " + p.ContainerName
 	}
-	return fmt.Sprintf("%s %s %d", p.Executable, p.User, p.Pid)
+	if ports := portsForSearch(p.Ports); ports != "" {
+		base += " " + ports
+	}
+	return base
 }
 
 // Len 是 `fuzzy.Source` 接口要求的另一个方法，返回数据源中的项目总数。
