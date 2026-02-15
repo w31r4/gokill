@@ -668,7 +668,9 @@ func (m model) handleMainListActionKey(msg tea.KeyMsg) (model, tea.Cmd, bool) {
 	case "enter":
 		if p, ok := m.selectedProcess(); ok {
 			if p.ContainerName != "" {
-				return m, stopContainer(int(p.Pid), p.ContainerName), true
+				// Docker containers go through confirm dialog since docker stop is a heavier operation.
+				m.confirm = &confirmPrompt{pid: p.Pid, name: p.ContainerName, op: "docker stop", sig: syscall.SIGTERM, status: process.Killed, containerName: p.ContainerName}
+				return m, nil, true
 			}
 			return m, sendSignalWithStatus(int(p.Pid), syscall.SIGTERM, process.Killed), true
 		}

@@ -404,13 +404,15 @@ func (m model) renderProcessPane() string {
 	return processPaneStyle.Render(strings.TrimRight(b.String(), "\n"))
 }
 
-// truncate ensures a string does not exceed maxLen.
-// If it does, it cuts it off and appends "…" (which takes 1 char width).
+// truncate ensures a string does not exceed maxLen runes.
+// If it does, it cuts it off and appends "…" (which takes 1 rune width).
+// Uses rune counting to correctly handle multi-byte characters (e.g., 🐳).
 func truncate(s string, maxLen int) string {
-	if len(s) <= maxLen {
+	runes := []rune(s)
+	if len(runes) <= maxLen {
 		return s
 	}
-	return s[:maxLen-1] + "…"
+	return string(runes[:maxLen-1]) + "…"
 }
 
 // renderPortPane 负责渲染右侧的端口信息面板。
@@ -462,7 +464,13 @@ func (m model) renderConfirmView() string {
 	}
 	title := confirmTitleStyle.Render("Confirm Action")
 	op := strings.Title(m.confirm.op)
-	msg := fmt.Sprintf("Action: %s\nProcess: %s (%d)", op, m.confirm.name, m.confirm.pid)
+	var target string
+	if m.confirm.containerName != "" {
+		target = fmt.Sprintf("Container: %s", m.confirm.name)
+	} else {
+		target = fmt.Sprintf("Process: %s (%d)", m.confirm.name, m.confirm.pid)
+	}
+	msg := fmt.Sprintf("Action: %s\n%s", op, target)
 	body := confirmPaneStyle.Render(confirmMessageStyle.Render(msg))
 	help := confirmHelpStyle.Render(" y/enter: confirm • n/esc: cancel • q: quit")
 	return docStyle.Render(lipgloss.JoinVertical(lipgloss.Left, title, body, help))

@@ -30,8 +30,10 @@ type containerEntry struct {
 // by inspecting all Docker networks. Results are cached within a single scan cycle
 // to avoid redundant CLI calls from concurrent workers.
 type dockerNetworkResolver struct {
-	mu    sync.Mutex
-	cache map[string][]containerEntry // network name → containers
+	mu       sync.Mutex
+	cache    map[string][]containerEntry // network name → containers
+	networks []string                    // cached network names (nil = not yet fetched)
+	netOnce  sync.Once                   // ensures network list is fetched only once
 }
 
 // newDockerNetworkResolver creates a fresh resolver for one GetProcesses() scan cycle.
@@ -41,7 +43,8 @@ func newDockerNetworkResolver() *dockerNetworkResolver {
 	}
 }
 
-// listDockerNetworks returns the names of all Docker networks.
+// listDockerNetworks returns the names of all Docker networks,
+// excluding 'host' and 'none' which never have container IP assignments.
 func listDockerNetworks() []string {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
@@ -54,7 +57,7 @@ func listDockerNetworks() []string {
 	var networks []string
 	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
 		line = strings.TrimSpace(line)
-		if line != "" {
+		if line != "" && line != "host" && line != "none" {
 			networks = append(networks, line)
 		}
 	}
@@ -98,20 +101,24 @@ func parseNetworkInspectOutput(output string) []containerEntry {
 }
 
 // resolve maps a docker-proxy cmdline to the container name by searching
-// across all Docker networks. It caches network inspection results so that
-// multiple docker-proxy processes in one scan don't trigger redundant calls.
+// across all Docker networks. It caches both the network list and individual
+// network inspection results to minimize CLI calls.
 func (r *dockerNetworkResolver) resolve(cmdline string) string {
 	containerIP := parseContainerIPFromCmdline(cmdline)
 	if containerIP == "" {
 		return ""
 	}
 
-	networks := listDockerNetworks()
-	if len(networks) == 0 {
+	// Cache the network list so multiple docker-proxy processes
+	// don't each spawn a separate `docker network ls` subprocess.
+	r.netOnce.Do(func() {
+		r.networks = listDockerNetworks()
+	})
+	if len(r.networks) == 0 {
 		return ""
 	}
 
-	for _, net := range networks {
+	for _, net := range r.networks {
 		entries := r.getOrInspect(net)
 		for _, e := range entries {
 			if e.IPv4 == containerIP {
