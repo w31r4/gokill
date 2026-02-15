@@ -29,13 +29,14 @@ const (
 
 // Item represents a process in our list.
 type Item struct {
-	Pid        int32    `json:"pid"`
-	PPid       int32    `json:"ppid"`
-	Executable string   `json:"executable"`
-	User       string   `json:"user"`
-	StartTime  string   `json:"startTime"`
-	Status     Status   `json:"status"`
-	Ports      []uint32 `json:"ports"`
+	Pid           int32    `json:"pid"`
+	PPid          int32    `json:"ppid"`
+	Executable    string   `json:"executable"`
+	User          string   `json:"user"`
+	StartTime     string   `json:"startTime"`
+	Status        Status   `json:"status"`
+	Ports         []uint32 `json:"ports"`
+	ContainerName string   `json:"containerName,omitempty"`
 }
 
 // NewItem creates a new Item for testing purposes.
@@ -175,16 +176,25 @@ func GetProcesses() ([]*Item, []error, error) {
 					cancel()
 				}
 
+				// Docker container detection: resolve docker-proxy to container name.
+				var containerName string
+				if name == "docker-proxy" {
+					if cmdline, err := p.Cmdline(); err == nil {
+						containerName = resolveDockerProxyContainer(cmdline)
+					}
+				}
+
 				// --- 任务完成，发送结果 ---
 				// 将处理好的进程信息封装成 Item 结构体，并发送到 `results` channel。
 				results <- &Item{
-					Pid:        p.Pid,
-					PPid:       ppid,
-					Executable: name,
-					User:       user,
-					StartTime:  startTime,
-					Status:     Alive,
-					Ports:      ports,
+					Pid:           p.Pid,
+					PPid:          ppid,
+					Executable:    name,
+					User:          user,
+					StartTime:     startTime,
+					Status:        Alive,
+					Ports:         ports,
+					ContainerName: containerName,
 				}
 			}
 		}()
