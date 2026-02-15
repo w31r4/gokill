@@ -1,6 +1,6 @@
 {
   "name": "@zenfun510/gokill",
-  "version": "1.4.0",
+  "version": "1.4.1",
   "description": "Interactive process killer for Linux and macOS.",
   "bin": {
     "gokill": "bin/gokill"

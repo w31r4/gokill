@@ -7,7 +7,7 @@ on:
 
 permissions:
   contents: write
-  id-token: write # Required for npm OIDC
+  id-token: write
 
 jobs:
   test:
@@ -39,7 +39,6 @@ jobs:
           TAP_GITHUB_TOKEN: ${{ secrets.TAP_GITHUB_TOKEN }}
 
   npm-publish:
-    if: false # temporarily disabled: manual npm publish OK, CI hitting 404
     needs: goreleaser
     runs-on: ubuntu-latest
     steps:
@@ -49,19 +48,18 @@ jobs:
           node-version: '24.x'
           registry-url: 'https://registry.npmjs.org'
           scope: '@zenfun510'
-      
+
       - name: Prepare npm package
         working-directory: npm
         run: |
           # Extract version from tag (e.g., v1.0.0 -> 1.0.0)
           VERSION=${GITHUB_REF#refs/tags/v}
 
-          # Update version in package.json
+          # Update version in package.json to match the tag
           npm version "$VERSION" --no-git-tag-version
 
       - name: Publish to npm
         working-directory: npm
         env:
-          NPM_CONFIG_PROVENANCE: true
-          NPM_CONFIG_REGISTRY: https://registry.npmjs.org
-        run: npm publish --provenance --access public
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --access public
