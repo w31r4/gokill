@@ -124,6 +124,11 @@ func GetProcesses() ([]*Item, []error, error) {
 	// **Worker Pool 的启动**
 	// 使用 WaitGroup 来追踪所有 Worker Goroutine 的完成状态。
 	var wg sync.WaitGroup
+
+	// Create a scan-scoped Docker network resolver for docker-proxy detection.
+	// This caches network inspection results across all workers in this scan cycle.
+	resolver := newDockerNetworkResolver()
+
 	// 这个循环创建并启动了 `numWorkers` 个 Worker Goroutine。
 	for w := 0; w < numWorkers; w++ {
 		// 每启动一个 Goroutine，WaitGroup 的计数器就加一。
@@ -180,7 +185,7 @@ func GetProcesses() ([]*Item, []error, error) {
 				var containerName string
 				if name == "docker-proxy" {
 					if cmdline, err := p.Cmdline(); err == nil {
-						containerName = resolveDockerProxyContainer(cmdline)
+						containerName = resolver.resolve(cmdline)
 					}
 				}
 
